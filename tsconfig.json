@@ -1,0 +1,19 @@
+{
+  // Type checking only (`npm run check`). Node runs the .ts files directly by
+  // stripping types, so nothing is ever emitted.
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "noUncheckedIndexedAccess": false,
+    "skipLibCheck": true
+  },
+  "include": ["server.ts", "src/**/*.ts", "static/**/*.ts"]
+}

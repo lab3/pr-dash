@@ -1,0 +1,20 @@
+{
+  "name": "pr-dash",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Local dashboard of open GitHub pull requests, grouped by repo",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node server.ts",
+    "open": "node server.ts --open",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "typescript": "^5.8.0"
+  }
+}

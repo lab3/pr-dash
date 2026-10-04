@@ -1,0 +1,22 @@
+{
+  "_comment": "Copy to config.json and edit. Keys starting with _ are ignored. Changes apply on the next refresh (port/host need a restart).",
+
+  "mine": true,
+  "owners": ["my-org"],
+  "repos": [],
+  "exclude": ["my-org/sandbox-*"],
+
+  "include_archived": false,
+  "include_forks": false,
+
+  "max_repos_per_source": 200,
+  "prs_per_repo": 50,
+
+  "host": "127.0.0.1",
+  "port": 8787,
+  "cache_seconds": 120,
+  "refresh_seconds": 300,
+
+  "_tokens_comment": "Optional. Default is GITHUB_TOKEN/GH_TOKEN, then `gh auth token`. Specs: \"gh\", \"env:VAR\", \"keychain:SERVICE\".",
+  "tokens": {}
+}
