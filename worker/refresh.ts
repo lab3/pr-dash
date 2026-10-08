@@ -16,11 +16,18 @@ export interface RefreshDeps {
 
 const defaultDeps: RefreshDeps = { collect: realCollect, tokens: (cfg, env) => appTokens(cfg, env), now: () => Date.now() };
 
-export async function readConfig(kv: KVNamespace): Promise<Config> {
-  const stored = (await kv.get("config", "json")) as Partial<Config> | null;
+export async function readStoredConfig(kv: KVNamespace): Promise<Partial<Config> | null> {
+  return (await kv.get("config", "json")) as Partial<Config> | null;
+}
+
+function hostedConfig(stored: Partial<Config> | null): Config {
   const cfg = normalizeConfig({ ...DEFAULTS, ...(stored ?? {}) });
   cfg.mine = false; // the viewer is the App bot; list orgs in `owners` instead
   return cfg;
+}
+
+export async function readConfig(kv: KVNamespace): Promise<Config> {
+  return hostedConfig(await readStoredConfig(kv));
 }
 
 export async function readViews(kv: KVNamespace): Promise<View[]> {
@@ -34,11 +41,12 @@ export async function readData(kv: KVNamespace): Promise<DashboardData | null> {
 
 export async function runRefresh(env: Env, deps: RefreshDeps = defaultDeps): Promise<DashboardData> {
   const started = deps.now();
-  const [cfg, views] = await Promise.all([readConfig(env.PRDASH), readViews(env.PRDASH)]);
-  const stored = (await env.PRDASH.get("config", "json")) as Partial<Config> | null;
-  const result = await deps.collect(cfg, deps.tokens(cfg, env), { repos: exactViewRepos(views), owners: viewOwners(views) });
+  const [stored, views] = await Promise.all([readStoredConfig(env.PRDASH), readViews(env.PRDASH)]);
+  const cfg = hostedConfig(stored);
+  // An App token can't answer `viewer`; the config's viewer_login stands in for it.
+  const result = await deps.collect(cfg, deps.tokens(cfg, env), { repos: exactViewRepos(views), owners: viewOwners(views) }, { includeViewer: false });
   const warnings = [...result.warnings];
-  if (stored?.mine) warnings.push("`mine` is ignored in hosted mode; list the orgs in `owners`.");
+  if (stored?.mine === true) warnings.push("`mine` is ignored in hosted mode; list the orgs in `owners`.");
   const data: DashboardData = {
     ...result,
     warnings,

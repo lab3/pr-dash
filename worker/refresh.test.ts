@@ -59,7 +59,8 @@ test("runRefresh writes prs once with hosted, generatedAt, fetchMs and the mine 
   kv.store.set("config", JSON.stringify({ mine: true, owners: ["o"], viewer_login: "len", refresh_seconds: 300 }));
   kv.store.set("views", JSON.stringify({ views: [{ id: "v", name: "V", owners: ["p"], repos: ["q/r"] }] }));
   let extra: unknown;
-  const spy: typeof collect = async (cfg, _t, e) => { extra = e; return okCollect(cfg, _t, e); };
+  let opts: unknown;
+  const spy: typeof collect = async (cfg, _t, e, o) => { extra = e; opts = o; return okCollect(cfg, _t, e); };
   const data = await runRefresh(env(kv), deps(spy));
   assert.equal(kv.writes, 1);
   assert.equal(data.hosted, true);
@@ -68,9 +69,19 @@ test("runRefresh writes prs once with hosted, generatedAt, fetchMs and the mine 
   assert.equal(data.refreshSeconds, 300);
   assert.equal(data.viewer, "len");
   assert.deepEqual(extra, { repos: ["q/r"], owners: ["p"] });
+  assert.equal((opts as { includeViewer: boolean }).includeViewer, false);
   assert.ok(data.warnings.includes("w1"));
   assert.ok(data.warnings.some((w) => w.includes("mine")));
   assert.deepEqual(await readData(kv as unknown as KVNamespace), data);
+});
+
+test("runRefresh gives no mine warning when the stored config has no mine", async () => {
+  const kv = new MemoryKV();
+  kv.store.set("config", JSON.stringify({ owners: ["o"], viewer_login: "len", mine: false }));
+  const data = await runRefresh(env(kv), deps(okCollect));
+  assert.ok(!data.warnings.some((w) => w.includes("mine")));
+  kv.store.set("config", JSON.stringify({ owners: ["o"], viewer_login: "len" }));
+  assert.ok(!(await runRefresh(env(kv), deps(okCollect))).warnings.some((w) => w.includes("mine")));
 });
 
 test("runRefresh leaves the old value when collect throws", async () => {

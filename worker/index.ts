@@ -55,6 +55,27 @@ async function readJson(request: Request, limit = 256 * 1024): Promise<unknown> 
   }
 }
 
+const ARRAY_KEYS = ["owners", "repos", "exclude", "bot_reviewers", "allowed_emails"];
+const NUMBER_KEYS = ["max_repos_per_source", "prs_per_repo", "cache_seconds", "refresh_seconds"];
+const BOOLEAN_KEYS = ["mine", "include_archived", "include_forks", "bot_reviews"];
+const TOKEN_SPEC = /^(app:\d+|secret:[A-Za-z0-9_]+)$/;
+
+/** Rejects unknown keys and wrong types, so a bad PUT can't store a config that breaks every refresh. */
+function validateConfigBody(body: Record<string, unknown>): void {
+  for (const [key, value] of Object.entries(body)) {
+    let ok: boolean;
+    if (ARRAY_KEYS.includes(key)) ok = Array.isArray(value) && value.every((v) => typeof v === "string");
+    else if (NUMBER_KEYS.includes(key)) ok = typeof value === "number" && Number.isFinite(value);
+    else if (BOOLEAN_KEYS.includes(key)) ok = typeof value === "boolean";
+    else if (key === "viewer_login") ok = value === null || typeof value === "string";
+    else if (key === "tokens") {
+      ok = !!value && typeof value === "object" && !Array.isArray(value)
+        && Object.values(value).every((v) => typeof v === "string" && TOKEN_SPEC.test(v));
+    } else ok = false;
+    if (!ok) throw new DashError(`Config field ${key} has the wrong type.`, null, 400);
+  }
+}
+
 const logBackground = (e: unknown): void => {
   console.error(`pr-dash: background refresh failed: ${(e as Error).message ?? e}`);
 };
@@ -99,8 +120,10 @@ async function api(request: Request, url: URL, env: Env, ctx: { waitUntil(p: Pro
     assertWritable(request);
     const body = await readJson(request);
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new DashError("Config must be a JSON object.", null, 400);
+    validateConfigBody(body as Record<string, unknown>);
     const stored = ((await kv.get("config", "json")) ?? {}) as Partial<Config>;
     const cfg: Config = normalizeConfig({ ...DEFAULTS, ...stored, ...(body as Partial<Config>) });
+    cfg.mine = false; // hosted mode ignores `mine`; keep it off in storage
     if (!cfg.allowed_emails.includes(email)) {
       throw new DashError("allowed_emails must include your own email, or you would lock yourself out.", null, 400);
     }
