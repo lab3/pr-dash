@@ -41,11 +41,11 @@ jobs:
       group: deploy-production
       cancel-in-progress: false
     env:
-      CF_ACCOUNT_ID: ${{ vars.CF_ACCOUNT_ID }}
-      PRDASH_HOSTNAME: ${{ vars.PRDASH_HOSTNAME }}
-      PRDASH_KV_ID: ${{ vars.PRDASH_KV_ID }}
-      ACCESS_TEAM_DOMAIN: ${{ vars.ACCESS_TEAM_DOMAIN }}
-      ACCESS_AUD: ${{ vars.ACCESS_AUD }}
+      CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+      PRDASH_HOSTNAME: ${{ secrets.PRDASH_HOSTNAME }}
+      PRDASH_KV_ID: ${{ secrets.PRDASH_KV_ID }}
+      ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
+      ACCESS_AUD: ${{ secrets.ACCESS_AUD }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -74,9 +74,9 @@ jobs:
     timeout-minutes: 5
     environment: production
     env:
-      PRDASH_HOSTNAME: ${{ vars.PRDASH_HOSTNAME }}
-      ACCESS_TEAM_DOMAIN: ${{ vars.ACCESS_TEAM_DOMAIN }}
-      ACCESS_AUD: ${{ vars.ACCESS_AUD }}
+      PRDASH_HOSTNAME: ${{ secrets.PRDASH_HOSTNAME }}
+      ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
+      ACCESS_AUD: ${{ secrets.ACCESS_AUD }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
