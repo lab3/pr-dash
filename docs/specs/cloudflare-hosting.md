@@ -1,190 +1,208 @@
-# pr-dash: hosting on Cloudflare Workers, draft spec
+# pr-dash: hosting on Cloudflare Workers (free plan), draft spec
 
-Status: spec v1, draft for Len to react to. No code changes made.
+Status: spec v2, revised with Len's answers (Oct 8) and the Grok PR Watcher review of #1. No code changes made.
 
 ## Goal
-Run pr-dash as a team-only site on Cloudflare, so it works from any device without a laptop running `node server.ts`. Keep the local app working, and stay compatible with `docs/specs/watcher-reviews.md`.
+Run pr-dash as a private site on Cloudflare's **Workers Free plan**, so it works from any device without a laptop running `node server.ts`. Keep the local app working, and stay compatible with `docs/specs/watcher-reviews.md`.
 
-## What has to change, and why
-- **Type stripping.** `server.ts` strips types from `static/*.ts` as it serves them, using Node's `stripTypeScriptTypes`. Static Assets can't do that.
-- **Node-only code.** `src/config.ts` uses `node:child_process` (`gh auth token`, macOS Keychain) and `node:fs` (`config.json`). `src/views.ts` uses `node:fs` (`views.json`, temp file then rename). `src/github.ts` imports `config.ts`, so it pulls in Node APIs too, even though its GraphQL calls only use `fetch` and would run on Workers as they are.
-- **Cache.** The cache is three module variables (`cached`, `fetchedAt`, `inflight`). On Workers, isolates come and go and every location has its own, so this needs a shared store.
-- **Loopback-only security.** `hostAllowed()` only accepts loopback Host headers, which means nothing on a public hostname. Cloudflare Access plus a check inside the Worker takes its place.
-- **"Mine" depends on a personal token.** `mine: true` runs `viewer.repositories`, and `isMine` and `reviewRequestedFromMe` compare against `viewer.login`. With a non-personal token (an App or a shared token), the viewer is a bot, not the person looking at the page.
+## Decisions (Len, Oct 8)
+1. **Account and hostname:** Len's "bucchino" Cloudflare account, hostname `prs.bucchino.com` (placeholder, Len to confirm), with a dedicated Access application for that hostname. Not `*.carecise.ai`, because the wildcard Carecise Access app admits the whole Carecise sign-in, which would show Ascera-life and Workarea-io PRs to Carecise members.
+2. **Users:** Len only. The Access policy allows his email only. Identity is a single configured GitHub login, kept extensible (see Config).
+3. **Plan:** it **must** run on Workers Free. No Paid requirement. "If we outgrow free" lists the symptoms and the fallback.
+4. **Config out of the public repo:** the org list, repos and owners, identity email, and every other non-secret setting live in **Workers KV**, with a seed script and an admin route. Secrets stay as Worker secrets. Nothing identifying is committed (see "Public repo hygiene").
+5. **Storage: KV** (it has a free tier; see the limits below).
+
+## Verified free-plan limits (Oct 8, 2026)
+| Limit | Free | Source |
+|---|---|---|
+| Worker CPU per request | **10 ms** (waiting on `fetch`, KV and so on doesn't count) | [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) |
+| Subrequests per invocation | **50** (Paid: 10,000) | same |
+| Simultaneous outgoing connections per request | 6 | same |
+| Requests | 100,000/day (Error 1027 past that) | same |
+| Cron Triggers | 5 per account, 10 ms CPU each, **UTC only** | same, plus [Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/) |
+| KV | 100,000 reads/day, **1,000 writes/day**, 1 write/sec per key, 1 GB, values up to 25 MiB | [KV limits](https://developers.cloudflare.com/kv/platform/limits/), [KV pricing](https://developers.cloudflare.com/kv/platform/pricing/) |
+| D1 | 10 databases, 500 MB each, 5M rows read/day, 100k rows written/day, 50 queries per invocation | [D1 limits](https://developers.cloudflare.com/d1/platform/limits/), [D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/) |
+| Cache API | Free, but **"for Workers fronted by Cloudflare Access, the Cache API is not currently available"** | [Cache API](https://developers.cloudflare.com/workers/runtime-apis/cache/) |
+
+**What follows from these limits:**
+- The Cache API can't hold the PR snapshot (we're behind Access).
+- KV's 1,000 writes a day rule out writing a snapshot on every refresh.
+- Parsing several MB of GraphQL JSON in the Worker risks the 10 ms CPU limit.
+
+So the snapshot and the heavy work move to the **browser**, and the Worker becomes a thin, I/O-bound proxy.
 
 ## Target architecture
-- **One Worker, `pr-dash`**, with Workers Static Assets serving `dist/` (the built `static/`) and the API in the same Worker. This is the `carecise-formation` setup with an API added.
-- `wrangler.json` (enforced by a config check, as in formation's `scripts/lib/config.js`):
+- **One Worker, `pr-dash`,** with Workers Static Assets serving `dist/` (the built `static/`) and a thin API. Same shape as `carecise-formation`.
+- **`wrangler.json`** (checked by `scripts/check-config.mjs`, as in formation's `scripts/lib/config.js`):
   - `workers_dev: false`, `preview_urls: false`, exactly one `custom_domain` route
-  - `assets: { directory: "./dist", binding: "ASSETS", run_worker_first: true }`. Every request, assets included, passes the Access check in the Worker first and then goes to `env.ASSETS.fetch()`. This fixes the #23 finding that "the Worker serves static assets with no check of its own."
-  - A KV namespace bound as `PRDASH` (snapshot, views, cached tokens)
-  - `build: { command: "node scripts/build.mjs", watch_dir: ["static", "src"] }`, so `wrangler dev` rebuilds on change
-- **Request flow:** Cloudflare Access (at the edge) → the Worker checks the Access JWT → `/api/*` goes to the handlers, everything else to `ASSETS`.
-- **Shared code (runs on both Node and Workers):** `src/github.ts`, `src/types.ts`, the pure half of `src/config.ts`, the pure half of `src/views.ts`, and `src/botreviews.ts` from the watcher spec. Platform-specific code lives in `server.ts` (Node) and `worker/` (Cloudflare).
+  - `assets: { directory: "./dist", binding: "ASSETS", run_worker_first: true }`. Every request, assets included, passes the Access check in the Worker first, and only then goes to `env.ASSETS.fetch()`.
+  - KV namespace `PRDASH` (config and views only)
+  - `build: { command: "node scripts/build.mjs", watch_dir: ["static", "shared"] }`
+- **The Worker only:**
+  1. verifies Access
+  2. serves config and views from KV
+  3. runs **fixed** GraphQL query templates with the right installation token and **streams GitHub's response body straight back** (`new Response(gh.body)`), without `JSON.parse`
+- **The browser:**
+  - drives the fetch, one call per source page
+  - shapes, merges and filters the data
+  - computes the Watcher statuses and personal flags
+  - caches the last good snapshot in IndexedDB
+- **Shared pure code moves to a new `shared/` folder,** used by the browser, the Worker and `server.ts`: query templates, shaping, `botreviews`, `personalize`, config normalization, views validation. The local server serves `/shared/*.ts` with types stripped, the same way it serves `static/` today. This replaces the current rule that the browser can only import `src/` as types.
 
-## Serving the browser code
-- **Decision: a small build step with esbuild,** pinned as a devDependency in `package-lock.json`.
-  - `scripts/build.mjs` bundles `static/app.ts` into `dist/app.js` (ESM with a sourcemap, minifying optional). It copies `index.html` and `style.css`, and writes `dist/_headers`.
-  - esbuild only strips types, which is the same thing the current code assumes (`erasableSyntaxOnly`), so nothing in `static/` needs rewriting.
-- `static/index.html` changes `<script src="/app.ts">` to `/app.js`.
-- **Local Node mode keeps working:** `server.ts` answers `/app.js` with the type-stripped `app.ts`. The `./lib/*.ts` imports still resolve through the existing stripping path. There's no build for `node server.ts`.
-- **Local Worker mode:** `npx --no-install wrangler dev` runs the build and serves the Worker on localhost with secrets from `.dev.vars`, which is gitignored.
-- I considered committing prebuilt JS instead and rejected it: it drifts out of sync and is noise in reviews.
-
-## Porting server.ts route by route
-| Today (`server.ts`) | On Workers |
+## API (the same in both backends)
+| Route | Behavior |
 |---|---|
-| `GET /api/prs[?refresh=1]` → `getData()` | Same route and same response shape. It reads the snapshot from KV, and refreshes it when it's older than `cache_seconds` or `refresh=1` is passed. |
-| In-memory `cached` / `fetchedAt` | KV key `snapshot:v1` = `{ data, fetchedAt, viewsHash }`, plus the same module variables kept as a per-isolate first-level cache. KV is global, so Len's phone and laptop share one snapshot, and editing views can mark it stale. |
-| `inflight` (one fetch shared by concurrent requests) | The same promise within an isolate. Across isolates, a best-effort KV key `lock:refresh` (60-second TTL): if another isolate is already refreshing, serve the stale snapshot with `stale: true`, and the page picks up the fresh one on its next poll. A Durable Object would make this exact but isn't worth it for a handful of users. |
-| Refresh timing | **Lazy, as today:** refresh in the foreground when the snapshot is stale and someone loads the page. An optional Cron Trigger (for example every 5 minutes on weekdays during work hours) keeps it warm. It's off by default so the app doesn't use GitHub quota when nobody's looking. |
-| `GET /api/views` | Reads KV key `views`, validated with the existing `validateViews()`. |
-| `PUT /api/views` + `assertWritable` | Same validation and the same `X-PR-Dash: 1` and JSON checks. The Origin must equal `https://<custom domain>`. Writes the KV key `views`. If the views add a repo or owner that isn't in the snapshot, the snapshot is marked stale, as the current `fetchedAt = 0` does. Last write wins. |
-| `hostAllowed()` (loopback names) | Replaced by the Access JWT check on **every** request (below), plus Host must equal the configured custom domain. |
-| `serveStatic` + type stripping | `env.ASSETS.fetch()` serves the built `dist/`. |
-| `/src/*` blocked | Doesn't exist in `dist/`, so nothing to block. |
-| Error JSON (`DashError` → `{error, hint}`) | Same shape and status codes. The hints change to fit hosted mode, for example "token for Carecise is unavailable, check the App installation" instead of "run `gh auth login`." |
+| `GET /api/config` | Settings the browser needs: owners, repos, exclude, `prs_per_repo`, `max_repos_per_source`, `cache_seconds`, `refresh_seconds`, `bot_reviewers`, `bot_reviews`, `viewer_login`. **Never** tokens or installation IDs. |
+| `PUT /api/config` | Admin route behind `assertWritable`. Validated with `normalizeConfig()`, written to KV. |
+| `GET /api/views`, `PUT /api/views` | As today (`validateViews()`, `X-PR-Dash: 1`, JSON body, Origin must equal `https://<host>`), stored in the KV key `views`. |
+| `GET /api/gh/owner?login=&cursor=` | One page of `OWNER_QUERY` (25 repos, `$prs` PRs each). The owner must be in config or views. |
+| `GET /api/gh/repos?r=a/b,c/d…` | One `explicitQuery()` batch of 20 repos or fewer. |
+| `GET /api/gh/watcher?ids=…` | The watcher spec's `nodes(ids:)` enrichment for 20 PR ids or fewer. |
+| `GET /api/health` | `{ok:true}`, for the post-deploy probe. |
+- The browser never sends GraphQL. It only sends validated parameters (owner and repo name patterns, base64 cursor, PR node IDs), so the Worker can't be used as a general-purpose GitHub proxy.
+- `/api/prs` is retired. Its orchestration (`collect()`: sources, pagination, dedupe, exclude/archived/fork filters, the `max_repos_per_source` cap) moves to `static/lib/fetcher.ts`.
+- **Local `server.ts` implements the same routes** with the `gh` token and files: `config.json` for config, `views.json` for views. Both modes then run identical browser code, which addresses the review's dual-mode drift nit.
 
-**Per-user flags.** The snapshot is shared by everyone, so `isMine` and `reviewRequestedFromMe` get filled in for each request by a pure `personalize(data, githubLogin)` function. It's the same comparison `shapePr` does today, moved out of it. Both modes use it: locally the login comes from `gh`, and hosted it comes from the Access email through an `identities` map in the config (for example `{ "<Len's email>": "<Len's GitHub login>" }`). Users with no mapping just don't see "yours" or "needs your review."
+## Browser fetch, cache, and the stale behavior (review finding 1)
+- **On load:** paint the IndexedDB snapshot right away if there is one. If it's older than `cache_seconds`, or the user pressed Refresh, start a refresh.
+- **Refresh steps:**
+  1. Read `/api/config` and `/api/views`.
+  2. Build the source list.
+  3. Fetch pages with **concurrency 4**, following `hasNextPage` up to `max_repos_per_source`.
+  4. Run watcher enrichment for PRs that have a Watcher review.
+  5. Shape the data, run `personalize`, render, and save to IndexedDB with `fetchedAt`.
+- **Client states.** `stale` is defined here, so the server doesn't need a flag:
+  - `refreshing`: the old data stays on screen, the Refresh button spins, and the footer says "Refreshing…".
+  - `stale`: shown when the snapshot is older than `cache_seconds` and no refresh is running, for example a background tab or a refresh error. The footer says "Updated 7m ago · stale". A refresh starts on focus (the existing `visibilitychange` hook) or on the next timer tick.
+  - `partial`: one or more sources failed. Render what loaded, list the failed owners or batches in the existing warnings notice, and retry just those after 30 seconds. Don't save a partial snapshot over a complete one.
+- **Coalescing:** one refresh at a time per tab (the existing `state.loading` guard). Another device or tab runs its own refresh, which is fine for one user.
+- Auto-refresh stays on `refresh_seconds`, still paused while the tab is hidden.
 
-## Access check in the Worker
-- Cloudflare Access app for the hostname. The policy allows only the people Len names; see open questions.
-- The Worker verifies `Cf-Access-Jwt-Assertion` on every request:
-  - RS256 signature against `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs` (the key set is cached per isolate and fetched again when it sees an unknown `kid`)
-  - `aud` contains `ACCESS_AUD`, `iss` equals the team domain, `exp` and `nbf` are valid
-  - Built on WebCrypto in about 60 lines in `worker/access.ts`, with no `jose` dependency (open to using `jose` if Len prefers)
-- A missing or invalid token gets `403` with no body detail. Assets are never served without it, since `run_worker_first` is on.
-- `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` are vars. The email comes from the verified JWT payload, never from the unsigned `Cf-Access-Authenticated-User-Email` header.
-- **Local dev bypass:** `.dev.vars` can set `DEV_ACCESS_EMAIL`. It only takes effect when the request's hostname is `localhost` or `127.0.0.1` **and** `ACCESS_AUD` is unset, so a deployed Worker can't be put into bypass mode by a variable alone.
-- **Warning:** a hostname under `*.carecise.ai` would fall under the wildcard Carecise Access app, which admits the whole Carecise Google sign-in. That would show Ascera-life and Workarea-io PRs to Carecise members. Use a dedicated Access app with a narrower policy, or a hostname on another zone.
+## How it fits the free limits
+- **CPU:** each Worker call does the Access JWT check (WebCrypto RS256, native), a parameter check, and possibly one cached-key RS256 signature for a GitHub App token. GitHub's response is streamed through without parsing, so the estimate is **about 1 to 3 ms**, well under 10 ms. Step 2 of the migration confirms this in Workers Logs (`cpuTime`) before go-live. All JSON parsing and shaping happens in the browser.
+- **Subrequests:** **4 or fewer per call:**
+  - 1 GraphQL request
+  - 1 installation token request, only on a cold isolate (tokens are cached in isolate memory for about 50 minutes, **not** in KV)
+  - 1 Access key set request, only on a cold isolate
+  - 1 KV read for config (cached in isolate memory for 60 seconds)
+
+  That's far below 50. The fan-out happens across many small browser requests instead of inside one Worker invocation.
+- **Requests:** a refresh is about 10 to 25 API calls (4 owners × 1 to 3 pages, 1 or 2 repo batches, 1 to 3 watcher batches). At 30 refreshes an hour for 10 hours, that's about 7,500 calls a day plus assets, well under 100,000.
+- **KV:** a few hundred reads a day. Writes happen only when config or views change, about 10 a day at most, against a limit of 1,000.
+- **Why KV over D1:** KV has a free tier with room to spare for two small documents (config, views) that are read often and written rarely. It's one binding, and seeding is `wrangler kv key put`. D1's free tier would work too, but it brings a schema and migrations for no benefit. Revisit D1 only for per-user views with heavy editing.
+- **GitHub:** with the watcher spec's two-step fetch, each installation uses well under its 5,000 points an hour.
+
+## If we outgrow free
+- **Symptoms:**
+  - **Error 1102 "Worker exceeded resource limits"** (`exceededCpu` in Workers Logs)
+  - **"Too many subrequests"** errors
+  - **Error 1027** (100,000 requests a day used up)
+  - KV write errors past 1,000 a day
+- **Fallback:** Workers Paid ($5/mo) is a plan switch, with 30 s of CPU and 10,000 subrequests. No code change is needed, and the same design simply gets headroom. Only then consider moving shaping back to the server or adding a shared snapshot.
+
+## Access, identity and security
+- **Cloudflare Access app** for `prs.bucchino.com`. The policy is Len's email, plus a **service token used only by the CI probe** (see Deploy). This needs Zero Trust set up on the bucchino account, with its own team domain.
+- **The Worker verifies `Cf-Access-Jwt-Assertion` on every request:**
+  - RS256 signature against `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs` (key set cached per isolate, fetched again on an unknown `kid`)
+  - `aud` equals `ACCESS_AUD`, `iss` is the team domain, `exp` and `nbf` are valid
+  - `email` from the **verified** claims is in the KV config `allowed_emails`, or `common_name` matches the probe's service token
+  - `Host` equals the configured hostname
+  - Otherwise `403` with no detail
+- **Identity:** config holds `viewer_login` (Len's GitHub login), and `personalize()` uses it for "yours" and "needs your review." To support more users later, replace it with an `identities: {email: login}` map. The code path doesn't change.
+- **Local dev bypass:** `DEV_ACCESS_EMAIL` in `.dev.vars` only works when the hostname is `localhost` or `127.0.0.1` and `ACCESS_AUD` is unset.
+- **Secrets** (`wrangler secret put` from Len's machine; never in GitHub Actions or the repo): `GH_APP_PRIVATE_KEY` (PKCS#8), `GH_APP_ID`, `ACCESS_AUD`.
+  - The installation IDs for each owner live in KV config `tokens`, for example `"Carecise": "app:<id>"`. They aren't secrets, just unnecessary to publish.
+  - GitHub tokens never reach the browser. Streamed bodies are GitHub's GraphQL data only, and upstream error bodies are replaced with short messages.
+- **Headers** (`dist/_headers`, and the Worker on API responses):
+  - `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https://avatars.githubusercontent.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`. `h()` sets styles through `el.style.cssText`, which this allows.
+  - `Referrer-Policy: same-origin`, `X-Content-Type-Options: nosniff`, `X-Robots-Tag: noindex`
+  - `Cache-Control: no-store` on `/api/*`
+- **Watcher markdown:** shaping now happens in the browser, so the watcher spec's `bodyHTML` allowlist sanitizer runs there too. It parses into an inert `<template>`, walks it, and keeps only the allowlisted tags and `https://` links. It's still backed by the CSP above. It's the same code in both modes.
+
+## Public repo hygiene
+- `wrangler.json` is committed with **placeholders** for `account_id`, the route hostname and the KV namespace ID. The deploy step fills them in from variables in the GitHub `production` environment (`CF_ACCOUNT_ID`, `PRDASH_HOSTNAME`, `PRDASH_KV_ID`), then `check-config.mjs` validates the generated file.
+- Config (org list, repos, `allowed_emails`, `viewer_login`, installation IDs) lives only in KV, seeded from a **gitignored** `config.hosted.json`.
+- Nothing identifying is committed: no emails, no org inventory, no account or namespace IDs. This spec names the example hostname only as a placeholder.
 
 ## Config and views
-- **`config.json` → one JSON var, `CONFIG`,** in `wrangler.json` with the same keys and the same normalization (`loadConfig`'s clamps become a pure `normalizeConfig()`).
-  - Dropped in hosted mode: `host`, `port`, and `mine`, which needs a personal viewer and is forced to `false` with a warning. List the orgs in `owners` instead: `["Ascera-life", "Carecise", "Workarea-io", "lab3"]`.
-  - New: `identities` (email to GitHub login), `cron_refresh` (on/off).
-  - Watcher keys from the companion spec (`bot_reviewers`, `bot_reviews`) work unchanged.
-  - **The repo is public.** A `CONFIG` var in `wrangler.json` would publish the org and repo list and the identity emails. Alternative: keep `CONFIG` in KV (`config` key, edited with `wrangler kv key put`). See open questions.
-- **`views.json` → KV key `views`.** It's one small document with very few writes, so KV is enough. KV's eventual consistency (up to about 60 seconds across locations) only matters if two people edit views at the same moment. Switch to D1 only if views become per-user with real editing traffic.
-- **Seeding:** `wrangler kv key put views --path views.json` once, from the Mac's current file.
+- **Config:** KV key `config`, same keys as today's `config.json` plus `allowed_emails`, `viewer_login`, and the watcher keys (`bot_reviewers`, `bot_reviews`).
+  - `mine` isn't available in hosted mode: the viewer is the App bot, so it's forced to false with a warning. List the orgs in `owners`.
+  - `host` and `port` are local only.
+- **Seeding and admin:**
+  - `node scripts/seed-kv.mjs config.hosted.json [views.json]` checks the files with the shared validators, then runs `wrangler kv key put --remote`. Each run is 1 or 2 KV writes.
+  - Day-to-day changes go through `PUT /api/config` behind Access. Views keep their in-app editor through `PUT /api/views`.
 
-## GitHub auth
-`gh auth token` and Keychain don't exist on Workers. `Tokens.forOwner()` stays the single entry point, with a pluggable resolver: Node keeps `gh` / `env:` / `keychain:`, and the Worker adds `app:<installationId>` and `secret:<NAME>`.
+## GitHub auth (pending Len's decision)
+- **Recommendation: a new read-only GitHub App,** for example "pr-dash reader," owned by lab3 and installed on **all repositories** in Ascera-life, Carecise, Workarea-io and lab3.
+  - **Permissions:** Metadata read, Pull requests read, Checks read, Commit statuses read.
+  - Contents read **only if testing shows** `headRefOid` or commit fields fail without it.
+  - Organization Members read is optional, only for team review-request names.
+  - No webhooks, no write permissions.
+- **Alternative: four fine-grained PATs** (one per owner) stored as Worker secrets (`secret:GH_TOKEN_CARECISE`). Simpler to set up, but they expire (one year at most), they're tied to Len's account and share his personal rate limit, and a missed rotation quietly drops an org.
+- **Not Grok PR Watcher:** it has write permissions, and the watcher spec keeps its key out of pr-dash.
+- **Token resolution:** `Tokens.forOwner()` stays the entry point, with a pluggable resolver. Locally: `gh`, `env:` and `keychain:`. In the Worker: `app:<id>` and `secret:<NAME>`. Owners without an entry use the default.
 
-| | **A. Fine-grained PAT per org** (Worker secrets, `secret:GH_TOKEN_CARECISE` …) | **B. Separate read-only GitHub App** (installation tokens made in the Worker) |
-|---|---|---|
-| Setup | 4 PATs, since a fine-grained PAT targets exactly one owner. Org approval may be needed. | 1 App, 4 installations, 1 private key secret |
-| Expiry | Max 1 year (orgs may require less). 4 rotations a year, and when one is missed, that org's data quietly disappears. | None. Installation tokens are made hourly and cached in KV for about 50 minutes. |
-| Tied to | Len's personal account and his personal 5,000 points per hour (shared with his `gh` use) | The App. Each installation has its own rate-limit budget. |
-| "Mine" | `viewer` = Len, so `mine` works for him only | `viewer` is the bot, so it uses the `identities` map (needed anyway for more than one user) |
-| Code | About 0 new lines | About 80 lines (an RS256 JWT with WebCrypto, `POST /app/installations/{id}/access_tokens`, caching) |
-
-- **Recommendation: B, a new read-only App** (for example "pr-dash reader," owned by lab3, installed on all repositories in each org). Reasons:
-  - Tokens don't expire.
-  - It's least-privilege and revocable per org.
-  - Each org has its own rate limit.
-  - It isn't tied to Len's personal account.
-- **Don't reuse Grok PR Watcher.** It has write permissions to post reviews, and the watcher spec already decided its private key stays out of pr-dash.
-- **Permissions** (repository, **read-only**, the same for **Ascera-life, Carecise, Workarea-io, lab3**):
-  - Metadata: read (mandatory)
-  - Pull requests: read. This covers PRs, reviews, `reviewThreads`, review requests, `mergeable`, and `latestReviews` for the watcher spec.
-  - Checks: read and Commit statuses: read, for `statusCheckRollup` (CI)
-  - Contents: read, **only if testing shows** `commits(last:1){commit{…}}` / `headRefOid` fail without it. Try without it first.
-  - Organization → Members: read, optional, only if team review requests should show team slugs
-  - No webhooks, no write permissions, no account permissions
-- **The private key** needs converting once from PKCS#1 to PKCS#8 for WebCrypto (`openssl pkcs8 -topk8 -nocrypt`). Len stores it with `wrangler secret put GH_APP_PRIVATE_KEY` from his Mac. It never goes into GitHub Actions or the repo. `GH_APP_ID` and the installation IDs go in `CONFIG.tokens`, for example `"Carecise": "app:<id>"`.
-- **Installation tokens** are cached in KV (`ghtoken:<owner>`, 50-minute TTL) and used only inside the Worker. They never appear in a response, a log, or the snapshot.
-
-## Workers limits, and how the design stays within them
-| Limit | Free | Paid ($5/mo) | pr-dash need |
-|---|---|---|---|
-| CPU per request | 10 ms | 30 s default (up to 5 min) | Parsing and shaping several MB of GraphQL JSON for about 30 repos × 50 PRs, plus the watcher enrichment, is likely to go over 10 ms. |
-| Subrequests per request | 50 | 10,000 | Per refresh: about 4 owners × 1–3 pages, 1–2 explicit batches, 1–3 watcher batches, up to 4 token mints, 3–5 KV operations, 1 key set fetch. That's about 15–30. |
-| Simultaneous connections waiting on headers | 6 | 6 | Run GitHub calls with **concurrency ≤ 4** (today's `collect()` is sequential, so add a small pool). |
-| Cron CPU | 10 ms | 30 s | Only matters if the cron refresh is on. |
-- **Recommendation: Workers Paid.** On Free the fan-out fits, but CPU doesn't reliably.
-- **GitHub:** GraphQL is limited by cost points.
-  - The watcher spec's two-step fetch keeps the extra cost to about 1 point per 20 PRs.
-  - With a lazy 120-second cache, the worst case is about 30 refreshes an hour across all users. That's well under each installation's 5,000+ points per hour.
-  - The ≤4 concurrency stays clear of GitHub's secondary limits on concurrent requests.
-  - `rateLimit` per installation goes in the footer as it does today: show the lowest remaining value.
-- **Snapshot size:** KV allows values up to 25 MiB. The watcher `bodyHTML` adds the most, but at about 30 open PRs it stays well under 1 MB.
-
-## Security
-- **Access:** a dedicated application for the hostname with an explicit allowlist of emails (or a group). The `kid` / AUD is pinned in the post-deploy and scheduled checks.
-- **Never public:** `workers_dev: false` and `preview_urls: false`, enforced by `scripts/check-config.mjs` in CI. There's no other route.
-- **Defense in depth:** JWT check in the Worker on every request (assets included) and `Host` pinned to the custom domain.
-- **Secrets:** the App key goes in a Workers secret, set by Len. The CI token can deploy but can't read secrets. Local `.dev.vars` is gitignored. GitHub tokens never reach the browser: API responses carry only shaped data, and errors are rewritten so they don't echo upstream bodies that might contain headers.
-- **Headers:** `dist/_headers` for assets, and the same set added by the Worker on API responses:
-  - `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https://avatars.githubusercontent.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`. `h()` sets styles through `el.style.cssText`, which this policy allows. The favicon is a `data:` SVG.
-  - `Referrer-Policy: same-origin`, so GitHub links don't leak the private hostname
-  - `X-Content-Type-Options: nosniff`, `X-Robots-Tag: noindex`
-  - `Cache-Control: no-store` on `/api/*`
-- **Watcher markdown:** the companion spec's `bodyHTML` allowlist sanitizer has to be pure TypeScript (no DOM, no Node), so it runs in both modes. It drops `img` (blocked by CSP anyway) and keeps only `https://` links.
-- **Writes:** `PUT /api/views` is still the only write route, behind `assertWritable` (custom header, JSON body, exact Origin match).
+## Cron (not recommended for now)
+- Free allows Cron Triggers (5 per account, 10 ms CPU), but a warm cache would need a server-side snapshot, which this design doesn't have. **Recommendation: lazy refresh only.**
+- If it's added later: **cron runs in UTC only.** Weekday work hours in Chicago (8 AM to 6 PM) are `*/10 13-22 * * MON-FRI` during CDT (UTC-5) and `*/10 14-23 * * MON-FRI` during CST (UTC-6). Either switch the expression at each DST change, or use `*/10 13-23 * * MON-FRI` all year and accept an extra hour at one end. Tests would run the handler through `wrangler dev`'s `/cdn-cgi/local/scheduled?cron=…&time=…` on both sides of a DST change.
 
 ## Deploy pipeline (formation's pattern, with the #23 review fixes)
-- `.github/workflows/deploy.yml`:
-  - **On every push:** `npm ci` → `npm run check` (tsc) → `node --test` → `node scripts/check-config.mjs` → build. Nothing deploys from branches.
-  - **Deploy job:** `if: github.ref == 'refs/heads/main'`, `environment: production` (GitHub environment with *Deployment branches: main only*). `CLOUDFLARE_API_TOKEN` lives **only** in that environment, not at repo level.
-  - **The CF token is used by this repo only,** scoped to Account → Workers Scripts: Edit, plus Zone → Workers Routes: Edit for the one zone. The KV namespace is created once by hand, so the token doesn't need KV edit access.
-  - **Wrangler is a devDependency pinned in `package-lock.json`** and run with `npx --no-install wrangler deploy`. Actions are pinned by SHA, `persist-credentials: false`, `permissions: contents: read`, concurrency group with `cancel-in-progress: false`.
-  - **Post-deploy:** `scripts/check-access.mjs`, ported from formation with the AUD pinned to the redirect's `kid`. It probes `/` and `/api/prs`, and both must 302 to this Access app.
-  - **`schedule:` hourly:** runs the same access check with no deploy, so a change to the Access app gets caught.
-- **Rollback:** `wrangler rollback`, documented in the README.
-
-## Custom domain
-- **Placeholder:** `prs.<zone Len chooses>`.
-- It must be a zone on the same Cloudflare account as the Access team.
-- Avoid `*.carecise.ai` unless it gets its own more specific Access app (see the warning above). A lab3 or personal zone fits better, since the dashboard covers four orgs.
+- **`.github/workflows/deploy.yml`:**
+  - **On every push:** `npm ci` → `npm run check` → `node --test` → build → `check-config.mjs` against a placeholder-filled config. Branches never deploy.
+  - **Deploy job:** `if: github.ref == 'refs/heads/main'`, `environment: production` (deployment branches limited to main). `CLOUDFLARE_API_TOKEN` exists **only** in that environment.
+  - **The CF token is used by this repo only,** scoped to Account → Workers Scripts: Edit, plus Zone → Workers Routes: Edit for the bucchino zone. The KV namespace is created once by hand, so the token has no KV access.
+  - **Wrangler is a devDependency pinned in `package-lock.json`,** run with `npx --no-install wrangler deploy`. Actions are pinned by SHA, `persist-credentials: false`, `permissions: contents: read`, `cancel-in-progress: false`.
+- **Post-deploy checks (review finding 5):**
+  1. `check-access.mjs` (ported, AUD pinned to the redirect's `kid`): a signed-out request to `/`, `/app.js` and `/api/health` must 302 to **this** Access app.
+  2. `check-worker.mjs` with the Access **service token** (`CF-Access-Client-Id` and `CF-Access-Client-Secret` as `production` environment secrets): `/`, `/app.js` and `/api/health` must return 200 **through the Worker**, which proves the JWT check, Host pin and `run_worker_first` work on assets.
+  3. A request that reaches the Worker without the assertion must get 403. That can't be produced in production (Access always adds the header), so it's covered by tests against `wrangler dev` and Miniflare.
+- **`schedule:` hourly** (GitHub Actions cron, also UTC): rerun checks 1 and 2 with no deploy.
+- **Rollback:** `wrangler rollback`.
 
 ## Migration steps
-1. **Refactor with no behavior change.** Split `src/config.ts` into a pure core and a Node loader, and `src/views.ts` into pure validation and fs storage. Add `personalize()` and a concurrency pool in `collect()`. Point `index.html` at `/app.js` and add the alias in `server.ts`. Add tests and a CI workflow that only runs checks. `node server.ts` behaves exactly as today.
-2. Add `worker/`, `wrangler.json`, `scripts/build.mjs`, `scripts/check-config.mjs`, `scripts/check-access.mjs`. Test with `wrangler dev` on localhost (dev bypass on).
-3. **Len's one-time setup:** create the read-only App and install it on the 4 orgs. Convert the key and `wrangler secret put` it. Create the KV namespace. Create the Access app and policy and note the AUD. Create the Workers-scoped CF token. Create the GitHub `production` environment holding that token.
-4. Merge to main, deploy, and confirm the access check passes. Seed `views` (and `config`, if it goes in KV).
-5. Use the hosted site. **Local stays fully supported:** `node server.ts` with `gh`, `config.json` and `views.json`, unchanged. The two modes don't share views unless Len copies them.
+1. **Watcher spec first, or at least a stub.** Land `shared/botreviews.ts` from `watcher-reviews.md` (or a stub that returns no statuses) before or inside this step, so the port doesn't wait on a missing module (review finding 6).
+2. **Refactor with no hosting yet.** Create `shared/` (queries, shaping, `personalize`, `normalizeConfig`, `validateViews`). Move `collect()` orchestration into `static/lib/fetcher.ts` with IndexedDB caching and the client states above. Give `server.ts` the new routes (`/api/config`, `/api/gh/*`) and retire `/api/prs`. Point `index.html` at `/app.js`. Add tests and a CI workflow that only runs checks. `node server.ts` shows the same dashboard as today.
+3. Add `worker/`, `wrangler.json` with placeholders, `scripts/build.mjs`, `seed-kv.mjs`, `check-config.mjs`, `check-access.mjs`, `check-worker.mjs`. Run `wrangler dev` and confirm CPU stays at about 3 ms or less on real data, using `wrangler dev --remote` or the first deploy's Workers Logs.
+4. **Len's one-time setup:** confirm the hostname and zone. Set up Zero Trust on the bucchino account (team domain), the Access app, a policy for his email, and the probe service token. Create the KV namespace. Set up the GitHub App or PATs, and run `wrangler secret put`. Create the Workers-scoped CF token and the `production` environment with its variables and secrets. Seed KV.
+5. Merge to main, deploy, and see the checks pass.
+6. Local stays first-class: `node server.ts` with `gh`, `config.json` and `views.json`. The two modes don't share views or config unless Len copies them.
 
 ## Testing
-`node --test` (TypeScript runs directly, no extra dependency):
-- **Access:** valid token, wrong `aud`, wrong `iss`, expired, unknown `kid` (refetches the key set), missing header → 403. The dev bypass is refused when `ACCESS_AUD` is set or the host isn't local.
-- **App tokens:** JWT claims (`iss` = app id, `iat` 60 seconds back, `exp` ≤ 10 minutes), cache hit and expiry.
-- **Routes:** `/api/prs` cache hit, stale refresh, `refresh=1`, lock held → stale served. `PUT /api/views` without the header, with the wrong Origin, with invalid views → 4xx, and a valid write marks the snapshot stale.
-- **Pure functions:** `normalizeConfig`, `validateViews`, `personalize`, the concurrency pool, plus `botreviews` and the sanitizer from the watcher spec.
-- **Build and deploy checks:** `dist/` contains `app.js`, `index.html` references it, `_headers` has CSP and Referrer-Policy. `check-config` rejects `workers_dev: true`, `preview_urls: true`, or a missing custom domain. `check-access` verdicts, including a wrong `kid`.
-- Run with Miniflare and `wrangler dev` before the first deploy.
+`node --test`, with TypeScript running directly:
+- **Access:** valid token; wrong `aud`; wrong `iss`; expired; unknown `kid` (refetches keys); email not allowed; service token; missing header → 403 (also on an asset path); dev bypass refused when `ACCESS_AUD` is set or the host isn't local.
+- **Worker API:** parameter validation (owner not in config, more than 20 repos or ids, bad cursor → 400); the GitHub body is streamed, not parsed; GitHub's 401 becomes a short error; `/api/config` never contains `tokens`; `PUT` without the header, with the wrong Origin, or with invalid data → 4xx.
+- **App tokens:** JWT claims (`iss`, `iat` set 60 seconds back, `exp` 10 minutes or less); isolate cache hit and expiry.
+- **Browser fetcher** (fixture GraphQL pages): pagination cap, dedupe, filters, concurrency 4 or less, `partial` on one failing source with a retry, `stale` after `cache_seconds`, a partial snapshot never overwrites a complete one.
+- **Shared:** `normalizeConfig`, `validateViews`, `personalize`, shaping, and `botreviews` plus the sanitizer from the watcher spec.
+- **Build and config checks:** `dist/` has `app.js` and `_headers` with CSP and Referrer-Policy; `check-config` rejects `workers_dev`, `preview_urls`, a missing domain, and leftover placeholders; `check-access` handles a wrong `kid`.
+- **Same output in both modes:** a fixture test loads the same recorded GraphQL pages through `server.ts` and through `wrangler dev`, and checks the rendered data matches.
 
 ## Files to change
 | File | Change |
 |---|---|
-| `wrangler.json` (new) | Worker name, account, custom domain, `workers_dev`/`preview_urls` false, assets with `run_worker_first`, KV binding, build command, vars |
-| `worker/index.ts` (new) | Fetch handler: Access check, Host pin, `/api/*` routing, `ASSETS` fallback, security headers, optional `scheduled` handler |
-| `worker/access.ts` (new) | Access JWT verification (WebCrypto, cached key set) |
-| `worker/github-app.ts` (new) | App JWT and installation tokens, cached in KV |
-| `worker/store.ts` (new) | KV snapshot, lock, views, config |
-| `src/config.ts` → `src/config-core.ts` + `src/config.ts` | Pure types, defaults, `normalizeConfig`, and `Tokens` with a pluggable resolver. The Node loader (`gh`, `env:`, `keychain:`) stays in `config.ts`. |
-| `src/views.ts` → `src/views-core.ts` + `src/views.ts` | Pure validation and helpers; fs load and save stay Node-only |
-| `src/github.ts` | Import only the core modules; concurrency pool; drop the per-viewer flags from `shapePr` (moved to `personalize`) |
-| `src/personalize.ts` (new) | `isMine` and `reviewRequestedFromMe` for a given login |
-| `server.ts` | `/app.js` alias, import updates, call `personalize` |
+| `shared/queries.ts`, `shared/shape.ts`, `shared/personalize.ts`, `shared/config-core.ts`, `shared/views-core.ts` (new) | Pure code from `src/github.ts`, `src/config.ts` and `src/views.ts`, shared by the browser, the Worker and Node |
+| `shared/botreviews.ts` | From the watcher spec (or a stub first) |
+| `src/config.ts`, `src/views.ts`, `src/github.ts` | Shrink to the Node pieces: the `gh`/`env:`/`keychain:` resolver, fs load and save, GraphQL transport |
+| `server.ts` | `/api/config`, `/api/gh/*`, `/api/health`; serve `/shared/*.ts`; `/app.js` alias; retire `/api/prs` |
+| `static/lib/fetcher.ts` (new) | Source orchestration, concurrency, IndexedDB cache, refreshing/stale/partial states |
+| `static/app.ts`, `static/lib/state.ts` | Use the fetcher; footer shows stale and partial; reword the "server still running?" hint |
 | `static/index.html` | `/app.ts` → `/app.js` |
-| `scripts/build.mjs` (new) | esbuild bundle, copy assets, write `_headers` |
-| `scripts/check-config.mjs`, `scripts/check-access.mjs` (new) | Ported from carecise-formation, with the AUD pinned |
-| `.github/workflows/deploy.yml` (new) | Checks on every branch; main-only deploy through the `production` environment; hourly access check |
-| `package.json` / `package-lock.json` | devDependencies `wrangler`, `esbuild`, `@cloudflare/workers-types` (pinned). Scripts `build`, `dev`, `test`, `check`. |
-| `tsconfig.json` + `tsconfig.worker.json` (new) | Separate type settings so DOM and Workers types don't clash |
-| `.gitignore` | `dist/`, `.dev.vars`, `.wrangler/` |
-| `test/*.test.ts` (new) | Tests listed above |
-| `README.md` | "Hosted on Cloudflare" section: setup, secrets, deploy, rollback; local mode unchanged |
-| `static/app.ts`, `static/lib/*` | No changes expected (API paths are already relative). Only the error hint "Is the server still running?" needs rewording. |
+| `worker/index.ts`, `worker/access.ts`, `worker/github-app.ts`, `worker/kv.ts` (new) | Routing and headers, JWT check, App tokens (cached in memory), config and views in KV |
+| `wrangler.json` (new, placeholders) | Assets with `run_worker_first`, KV binding, build command, no workers.dev or previews |
+| `scripts/build.mjs`, `seed-kv.mjs`, `check-config.mjs`, `check-access.mjs`, `check-worker.mjs` (new) | Build, seeding, deploy guard rails |
+| `.github/workflows/deploy.yml` (new) | Checks on every branch; main-only deploy through `production`; hourly probes |
+| `package.json`, `package-lock.json` | Pinned devDependencies `wrangler`, `esbuild`, `@cloudflare/workers-types`; scripts |
+| `tsconfig.json`, `tsconfig.worker.json` (new) | Separate type settings for DOM and Workers |
+| `.gitignore` | `dist/`, `.dev.vars`, `.wrangler/`, `config.hosted.json` |
+| `test/*.test.ts` (new) | Tests above |
+| `README.md` | "Hosted on Cloudflare" section; local mode unchanged |
+| `docs/specs/watcher-reviews.md` | One line: shaping, status and the sanitizer run in the browser (shared code), and the cache is the browser snapshot |
 
 ## Open questions for Len
-1. **Cloudflare account and hostname.** Which account and zone (Carecise's or a personal or lab3 one), and therefore which Access team domain? What subdomain?
-2. **Who gets in?** Only you, or teammates too? Anyone you add sees PRs from all four orgs unless we add per-user org filtering.
-3. **Workers Paid ($5/mo):** OK? Free is unlikely to stay under 10 ms of CPU per refresh.
-4. **GitHub auth:** OK with a new read-only "pr-dash reader" App (recommended) instead of four fine-grained PATs? Should lab3 or an org own it?
-5. **Config location.** The repo is public, so should `CONFIG` (org list, identity emails) go in KV instead of `wrangler.json`?
-6. **Views:** one shared set for everyone (simplest), or per-user views keyed by Access email?
-7. **Identities:** which email maps to which GitHub login for "yours" and "needs your review"?
-8. **Refresh:** lazy only (recommended), or a weekday cron to keep it warm?
-9. **Write actions:** ever planned (approve, merge)? This spec assumes read-only, and adding them would mean App write permissions and a stricter review.
-10. **Local mode:** keep it as a first-class option long term, or retire it once the hosted site is trusted?
+1. **Hostname:** is `prs.bucchino.com` right, and is that zone on the bucchino account? Is Zero Trust (Access team domain) already set up there? Is it OK for this public spec to name the domain, or should it be generic?
+2. **GitHub auth (pending):** new read-only App owned by lab3 (recommended), or four fine-grained PATs?
+3. **CI probe:** OK to add an Access service token, used only by the post-deploy and hourly probes, to the policy alongside your email?
+4. **Cron warming:** lazy only (recommended), or a UTC-scheduled weekday cron, which would also need a small shared snapshot?
+5. **Write actions:** assumed read-only for v1. Confirm.
+6. **Local mode:** keep it first-class long term, or retire it once the hosted site is trusted?
+7. **Views per user:** moot while it's just you. Revisit if anyone else is added.
