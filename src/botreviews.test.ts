@@ -182,6 +182,7 @@ test("mergeBlockers lists each blocker in display order", () => {
 
 test("mergeBlockers: UNKNOWN mergeability is not ready", () => {
   assert.deepEqual(mergeBlockers({ ...base, mergeable: "UNKNOWN" }), ["merge check pending"]);
+  assert.deepEqual(mergeBlockers({ ...base, mergeable: null }), ["merge check pending"]);
 });
 
 test("mergeBlockers: branch protection states", () => {

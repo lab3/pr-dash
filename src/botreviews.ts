@@ -156,7 +156,7 @@ export function mergeBlockers(
   if (pr.ci === "FAILURE" || pr.ci === "ERROR") out.push("CI failing");
   else if (pr.ci === "PENDING" || pr.ci === "EXPECTED") out.push("CI pending");
   if (pr.mergeable === "CONFLICTING") out.push("conflicts");
-  else if (pr.mergeable === "UNKNOWN") out.push("merge check pending");
+  else if (pr.mergeable !== "MERGEABLE") out.push("merge check pending");
   if (pr.mergeState === "BLOCKED") out.push("blocked by branch rules");
   else if (pr.mergeState === "BEHIND") out.push("behind base");
   return out;
