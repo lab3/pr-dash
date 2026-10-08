@@ -39,10 +39,10 @@ test("app:<id> exchanges a JWT for an installation token and caches it", async (
       return new Response(JSON.stringify({ token: "ghs_inst", expires_at: "2026-01-01T00:00:00Z" }), { status: 201 });
     }) as typeof fetch,
   };
-  const cfg = { ...DEFAULTS, tokens: { carecise: "app:777" } };
+  const cfg = { ...DEFAULTS, tokens: { "my-org": "app:777" } };
   const t = appTokens(cfg, fakeEnv(), deps);
-  assert.equal(await t.forOwner("Carecise"), "ghs_inst");
-  assert.equal(await t.forOwner("carecise"), "ghs_inst");
+  assert.equal(await t.forOwner("My-Org"), "ghs_inst");
+  assert.equal(await t.forOwner("my-org"), "ghs_inst");
   assert.equal(calls.length, 1, "second call served from cache");
   assert.equal(calls[0].url, "https://api.github.com/app/installations/777/access_tokens");
   assert.ok(calls[0].auth?.startsWith("Bearer "));
@@ -52,7 +52,7 @@ test("app:<id> exchanges a JWT for an installation token and caches it", async (
 test("default() uses tokens.default, else the single app entry, else throws", async () => {
   resetTokenCache();
   const deps = { now: () => 0, fetch: (async () => new Response(JSON.stringify({ token: "ghs_x", expires_at: "x" }), { status: 201 })) as typeof fetch };
-  assert.equal(await appTokens({ ...DEFAULTS, tokens: { lab3: "app:1" } }, fakeEnv(), deps).default(), "ghs_x");
+  assert.equal(await appTokens({ ...DEFAULTS, tokens: { "my-org": "app:1" } }, fakeEnv(), deps).default(), "ghs_x");
   await assert.rejects(appTokens({ ...DEFAULTS, tokens: { a: "app:1", b: "app:2" } }, fakeEnv(), deps).default(), /No default token/);
   await assert.rejects(appTokens({ ...DEFAULTS, tokens: {} }, fakeEnv(), deps).default(), /No default token/);
 });
@@ -68,4 +68,23 @@ test("a failed exchange throws a DashError naming the installation", async () =>
   resetTokenCache();
   const deps = { now: () => 0, fetch: (async () => new Response("nope", { status: 401 })) as typeof fetch };
   await assert.rejects(appTokens({ ...DEFAULTS, tokens: { o: "app:9" } }, fakeEnv(), deps).forOwner("o"), /installation 9/);
+});
+
+test("secret:NAME refuses the Worker's own secrets and settings", async () => {
+  for (const name of ["GH_APP_PRIVATE_KEY", "GH_APP_ID", "ACCESS_AUD", "ACCESS_TEAM_DOMAIN", "HOSTNAME", "DEV_ACCESS_EMAIL"]) {
+    const t = appTokens({ ...DEFAULTS, tokens: { default: `secret:${name}` } }, fakeEnv({ HOSTNAME: "pr.example.test" }));
+    await assert.rejects(t.default(), new RegExp(`Refusing to use ${name}`));
+  }
+});
+
+test("app:<id> must be numeric", async () => {
+  resetTokenCache();
+  const deps = { now: () => 0, fetch: (async () => { throw new Error("must not be called"); }) as typeof fetch };
+  await assert.rejects(appTokens({ ...DEFAULTS, tokens: { o: "app:../x" } }, fakeEnv(), deps).forOwner("o"), /Installation id "\.\.\/x" is not a number/);
+});
+
+test("an exchange that returns no token throws", async () => {
+  resetTokenCache();
+  const deps = { now: () => 0, fetch: (async () => new Response(JSON.stringify({ expires_at: "x" }), { status: 201 })) as typeof fetch };
+  await assert.rejects(appTokens({ ...DEFAULTS, tokens: { o: "app:9" } }, fakeEnv(), deps).forOwner("o"), /no token for installation 9/);
 });

@@ -13,7 +13,7 @@ const jwks = createLocalJWKSet({ keys: [{ ...(await exportJWK(pair.publicKey)), 
 const deps = { getJwks: () => jwks };
 
 async function token(claims: Record<string, unknown>, key = pair.privateKey, exp = "10m"): Promise<string> {
-  return new SignJWT({ email: "len@bitfly.org", ...claims })
+  return new SignJWT({ email: "you@example.org", ...claims })
     .setProtectedHeader({ alg: "RS256", kid: "k1" })
     .setIssuer(TEAM).setAudience(AUD).setIssuedAt().setExpirationTime(exp).sign(key);
 }
@@ -24,11 +24,11 @@ const env = (over: Partial<Env> = {}): Env =>
 const req = (jwt: string | null, host = "pr.example.test"): Request =>
   new Request(`https://${host}/`, { headers: jwt ? { "cf-access-jwt-assertion": jwt, host } : { host } });
 
-const allowed = ["len@bitfly.org"];
+const allowed = ["you@example.org"];
 
 test("valid token for an allowed email passes", async () => {
   const r = await verifyAccess(req(await token({})), env(), allowed, deps);
-  assert.deepEqual(r, { ok: true, email: "len@bitfly.org" });
+  assert.deepEqual(r, { ok: true, email: "you@example.org" });
 });
 
 test("missing header is 403 with no-store", async () => {
@@ -42,9 +42,9 @@ test("missing header is 403 with no-store", async () => {
 
 test("wrong audience, wrong issuer, expired, wrong key are all 403", async () => {
   for (const jwt of [
-    await new SignJWT({ email: "len@bitfly.org" }).setProtectedHeader({ alg: "RS256", kid: "k1" }).setIssuer(TEAM).setAudience("b".repeat(64)).setIssuedAt().setExpirationTime("10m").sign(pair.privateKey),
-    await new SignJWT({ email: "len@bitfly.org" }).setProtectedHeader({ alg: "RS256", kid: "k1" }).setIssuer("https://evil.cloudflareaccess.com").setAudience(AUD).setIssuedAt().setExpirationTime("10m").sign(pair.privateKey),
-    await new SignJWT({ email: "len@bitfly.org" }).setProtectedHeader({ alg: "RS256", kid: "k1" }).setIssuer(TEAM).setAudience(AUD).setIssuedAt(Math.floor(Date.now() / 1000) - 7200).setExpirationTime(Math.floor(Date.now() / 1000) - 3600).sign(pair.privateKey),
+    await new SignJWT({ email: "you@example.org" }).setProtectedHeader({ alg: "RS256", kid: "k1" }).setIssuer(TEAM).setAudience("b".repeat(64)).setIssuedAt().setExpirationTime("10m").sign(pair.privateKey),
+    await new SignJWT({ email: "you@example.org" }).setProtectedHeader({ alg: "RS256", kid: "k1" }).setIssuer("https://evil.cloudflareaccess.com").setAudience(AUD).setIssuedAt().setExpirationTime("10m").sign(pair.privateKey),
+    await new SignJWT({ email: "you@example.org" }).setProtectedHeader({ alg: "RS256", kid: "k1" }).setIssuer(TEAM).setAudience(AUD).setIssuedAt(Math.floor(Date.now() / 1000) - 7200).setExpirationTime(Math.floor(Date.now() / 1000) - 3600).sign(pair.privateKey),
     await token({}, other.privateKey),
   ]) {
     const r = await verifyAccess(req(jwt), env(), allowed, deps);
@@ -54,9 +54,9 @@ test("wrong audience, wrong issuer, expired, wrong key are all 403", async () =>
 });
 
 test("email not in the allowlist is 403; comparison is case-insensitive", async () => {
-  const bad = await verifyAccess(req(await token({ email: "someone@bitfly.org" })), env(), allowed, deps);
+  const bad = await verifyAccess(req(await token({ email: "someone@example.org" })), env(), allowed, deps);
   assert.equal(bad.ok, false);
-  const ok = await verifyAccess(req(await token({ email: "Len@Bitfly.org" })), env(), allowed, deps);
+  const ok = await verifyAccess(req(await token({ email: "You@Example.org" })), env(), allowed, deps);
   assert.equal(ok.ok, true);
 });
 
@@ -65,8 +65,8 @@ test("wrong Host is 403 even with a valid token", async () => {
   assert.equal(r.ok, false);
 });
 
-test("missing ACCESS_TEAM_DOMAIN or ACCESS_AUD is 500 not configured", async () => {
-  for (const over of [{ ACCESS_TEAM_DOMAIN: undefined }, { ACCESS_AUD: undefined }]) {
+test("missing ACCESS_TEAM_DOMAIN, ACCESS_AUD or HOSTNAME is 500 not configured", async () => {
+  for (const over of [{ ACCESS_TEAM_DOMAIN: undefined }, { ACCESS_AUD: undefined }, { HOSTNAME: undefined }]) {
     const r = await verifyAccess(req(await token({})), env(over), allowed, deps);
     assert.equal(r.ok, false);
     if (!r.ok) {
@@ -76,12 +76,20 @@ test("missing ACCESS_TEAM_DOMAIN or ACCESS_AUD is 500 not configured", async () 
   }
 });
 
+test("a token with no exp claim is 403", async () => {
+  const noExp = await new SignJWT({ email: "you@example.org" })
+    .setProtectedHeader({ alg: "RS256", kid: "k1" }).setIssuer(TEAM).setAudience(AUD).setIssuedAt().sign(pair.privateKey);
+  const r = await verifyAccess(req(noExp), env(), allowed, deps);
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.response.status, 403);
+});
+
 test("dev bypass works only on a local host with ACCESS_AUD unset", async () => {
-  const dev = env({ ACCESS_AUD: undefined, ACCESS_TEAM_DOMAIN: undefined, HOSTNAME: undefined, DEV_ACCESS_EMAIL: "len@bitfly.org" });
+  const dev = env({ ACCESS_AUD: undefined, ACCESS_TEAM_DOMAIN: undefined, HOSTNAME: undefined, DEV_ACCESS_EMAIL: "you@example.org" });
   const local = await verifyAccess(req(null, "localhost:8787"), dev, allowed, deps);
-  assert.deepEqual(local, { ok: true, email: "len@bitfly.org" });
+  assert.deepEqual(local, { ok: true, email: "you@example.org" });
   const remote = await verifyAccess(req(null, "pr.example.test"), dev, allowed, deps);
   assert.equal(remote.ok, false);
-  const withAud = await verifyAccess(req(null, "localhost:8787"), env({ DEV_ACCESS_EMAIL: "len@bitfly.org" }), allowed, deps);
+  const withAud = await verifyAccess(req(null, "localhost:8787"), env({ DEV_ACCESS_EMAIL: "you@example.org" }), allowed, deps);
   assert.equal(withAud.ok, false);
 });

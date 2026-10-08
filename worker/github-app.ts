@@ -33,7 +33,10 @@ export async function mintAppJwt(appId: string, pkcs8: string, nowSec: number): 
     .sign(key);
 }
 
+const SECRET_DENYLIST = ["GH_APP_ID", "GH_APP_PRIVATE_KEY", "ACCESS_TEAM_DOMAIN", "ACCESS_AUD", "HOSTNAME", "DEV_ACCESS_EMAIL"];
+
 async function installationToken(id: string, env: Env, deps: AppDeps): Promise<string> {
+  if (!/^\d+$/.test(id)) throw new DashError(`Installation id "${id}" is not a number.`, null, 500);
   const hit = cache.get(id);
   if (hit && hit.expiresAt > deps.now()) return hit.token;
   if (!env.GH_APP_ID || !env.GH_APP_PRIVATE_KEY) {
@@ -48,7 +51,8 @@ async function installationToken(id: string, env: Env, deps: AppDeps): Promise<s
     throw new DashError(`GitHub refused an installation token for installation ${id} (HTTP ${res.status}).`,
       "Check the App id, private key and that the App is installed on that org.", 502);
   }
-  const body = (await res.json()) as { token: string };
+  const body = (await res.json()) as { token?: unknown };
+  if (typeof body.token !== "string" || !body.token) throw new DashError(`GitHub returned no token for installation ${id}.`, null, 502);
   cache.set(id, { token: body.token, expiresAt: deps.now() + CACHE_MS });
   return body.token;
 }
@@ -57,8 +61,10 @@ async function resolve(spec: string, env: Env, deps: AppDeps): Promise<string> {
   const s = spec.trim();
   if (s.startsWith("app:")) return installationToken(s.slice(4), env, deps);
   if (s.startsWith("secret:")) {
-    const v = env[s.slice(7)];
-    if (typeof v !== "string" || !v) throw new DashError(`Secret ${s.slice(7)} is not set.`, null, 500);
+    const name = s.slice(7);
+    if (SECRET_DENYLIST.includes(name)) throw new DashError(`Refusing to use ${name} as a GitHub token.`, null, 500);
+    const v = env[name];
+    if (typeof v !== "string" || !v) throw new DashError(`Secret ${name} is not set.`, null, 500);
     return v;
   }
   throw new DashError(`Unknown token spec "${s}" for the Worker.`, 'Use "app:<installation id>" or "secret:NAME".', 500);

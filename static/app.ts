@@ -272,7 +272,7 @@ function renderFooter(): void {
   if (d.refreshSeconds) parts.push(`auto-refresh every ${Math.max(1, Math.round(d.refreshSeconds / 60))} min`);
   if (d.rateLimit) parts.push(`API ${d.rateLimit.remaining}/${d.rateLimit.limit} left`);
   const ageMs = Date.now() - +new Date(d.generatedAt);
-  if (d.hosted && ageMs > 10 * 60_000) parts.push("cron not running");
+  if (d.hosted && ageMs > 10 * 60_000) parts.push("no fresh data for 10+ min");
   els.footer.textContent = parts.join(" · ");
 }
 

@@ -1,7 +1,7 @@
 // Fail-closed gate in front of everything the Worker serves, assets included. Cloudflare Access
 // adds a signed JWT to every request in Cf-Access-Jwt-Assertion; we verify it against the team's
 // public keys, pin the audience to this application, and require the email to be on the
-// allowlist from KV config. Same approach as bedrock.workarea.io's worker.js.
+// allowlist from KV config.
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
 import type { Env } from "./env.ts";
 
@@ -47,8 +47,8 @@ export async function verifyAccess(
     return { ok: true, email: env.DEV_ACCESS_EMAIL.toLowerCase() };
   }
 
-  if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD) return { ok: false, response: deny("Site is not configured.", 500) };
-  if (env.HOSTNAME && host.toLowerCase() !== env.HOSTNAME.toLowerCase()) {
+  if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD || !env.HOSTNAME) return { ok: false, response: deny("Site is not configured.", 500) };
+  if (host.toLowerCase() !== env.HOSTNAME.toLowerCase()) {
     return { ok: false, response: deny("Wrong host.") };
   }
 
@@ -60,6 +60,8 @@ export async function verifyAccess(
     const { payload } = await jwtVerify(jwt, deps.getJwks(env.ACCESS_TEAM_DOMAIN), {
       issuer: env.ACCESS_TEAM_DOMAIN,
       audience: env.ACCESS_AUD,
+      algorithms: ["RS256"],
+      requiredClaims: ["exp", "iat"],
     });
     email = String(payload.email ?? "").toLowerCase();
   } catch {
