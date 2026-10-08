@@ -432,3 +432,7 @@ dialog.editor::backdrop { background: rgba(10, 12, 16, .45); }
 .ftext p { margin: 0; display: inline; }
 .freplies { font-size: 12px; }
 .fnone { margin-top: 8px; font-size: 12.5px; }
+.wdot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--muted); flex: none; }
+.wdot.open { background: var(--red); }
+.wdot.partly { background: var(--amber); }
+.wdot.addressed { background: var(--green); }

@@ -3,6 +3,7 @@ import type { PullRequest, Repo } from "../../src/types.ts";
 import { ICON, ago, daysSince, h, link, svg } from "./dom.ts";
 import { CI, REVIEW, avatarUrl, expandButton, moreOnGitHub } from "./list.ts";
 import { state, type RepoView } from "./state.ts";
+import { watcherDot } from "./watcher.ts";
 
 const CARD_CAP = 5; // PRs per card before "Show N more"
 
@@ -19,9 +20,11 @@ function card(repo: Repo, prs: PullRequest[]): HTMLElement {
   const failing = prs.filter((p) => p.ci === "FAILURE" || p.ci === "ERROR").length;
   const approved = prs.filter((p) => p.review === "APPROVED").length;
   const drafts = prs.filter((p) => p.isDraft).length;
+  const watcher = prs.filter((p) => (p.watcher?.open ?? 0) > 0).length;
   const stats = [
     review ? h("span", { class: "gstat you" }, `${review} need your review`) : null,
     failing ? h("span", { class: "gstat bad" }, `${failing} failing`) : null,
+    watcher ? h("span", { class: "gstat bad" }, `${watcher} with open Watcher findings`) : null,
     approved ? h("span", { class: "gstat good" }, `${approved} approved`) : null,
     drafts ? h("span", { class: "gstat" }, `${drafts} draft${drafts > 1 ? "s" : ""}`) : null,
   ].filter((x): x is HTMLSpanElement => !!x);
@@ -55,6 +58,7 @@ function row(pr: PullRequest): HTMLElement {
       h("div", { class: "gpr-meta" },
         avatar ? h("img", { class: "avatar", src: avatar, alt: "", loading: "lazy" }) : null,
         h("span", null, pr.author),
+        watcherDot(pr),
         h("span", { class: daysSince(pr.updatedAt) > 14 ? "stale" : "", title: "Updated " + new Date(pr.updatedAt).toLocaleString() },
           ago(pr.updatedAt)),
         pr.isDraft ? h("span", { class: "badge draft" }, "Draft") : null,
