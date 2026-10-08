@@ -1,7 +1,7 @@
 // Pure logic for bot (PR Watcher) reviews: which actor is a bot, what counts as a nit,
 // and how findings roll up into a status. No I/O, so `node --test` covers it.
 import { sanitizeHtml } from "./sanitize.ts";
-import type { Finding, PullRequest, WatcherReview, WatcherStatus, WatcherSummary } from "./types.ts";
+import type { Finding, PullRequest, WatcherReview, WatcherStatus, WatcherSummary } from "../src/types.ts";
 
 /**
  * GraphQL reports bots with a bare login ("grok-pr-watcher") and `__typename: "Bot"`,

@@ -99,12 +99,13 @@ Watcher data is fetched in a second, batched GraphQL query only for PRs whose la
 
 ```
 server.ts             HTTP server, response cache, API routes + request safety, static files
+shared/github.ts      GraphQL queries, pagination, shaping, Watcher fetch (Node and Worker)
+shared/botreviews.ts  Watcher status rules and merge blockers (pure, tested)
+shared/sanitize.ts    allowlist filter for GitHub's rendered bodyHTML (pure, tested)
+shared/config-core.ts, shared/views-core.ts   config and views validation shared by both runtimes
+shared/*.test.ts, static/lib/*.test.ts        node --test suites
 src/config.ts         config.json loading, token resolution (gh / env / macOS Keychain)
-src/github.ts         GraphQL queries, pagination, shaping into the dashboard model, batched Watcher fetch
-src/botreviews.ts     Watcher status rules and merge blockers (pure, tested)
-src/sanitize.ts       allowlist filter for GitHub's rendered bodyHTML (pure, tested)
-src/*.test.ts, static/lib/*.test.ts   node --test suites
-src/views.ts          views.json load/validate/save
+src/views.ts          views.json load/save
 src/types.ts          types shared by server and browser
 static/app.ts         browser entry: data loading, tabs, wiring
 static/lib/state.ts   UI state, view matching, filtering

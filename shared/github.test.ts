@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { RawBotReview, RawThread } from "./botreviews.ts";
-import { DEFAULTS, type Config } from "./config.ts";
-import { VIEWER_QUERY, attachBotReviews, botReviewsQuery, capWarning, hasBotReview, type BotReviewRaw, type Context } from "./github.ts";
-import type { PullRequest, Repo } from "./types.ts";
+import { DEFAULTS, type Config } from "./config-core.ts";
+import { VIEWER_QUERY, attachBotReviews, botReviewsQuery, capWarning, collect, explicitQuery, hasBotReview, ownerQuery, type BotReviewRaw, type Context } from "./github.ts";
+import type { PullRequest, Repo } from "../src/types.ts";
 
 test("repo query carries the Watcher marker fields", () => {
   for (const field of ["id", "headRefOid", "mergeable", "mergeStateStatus", "latestReviews(first: 10)"]) {
@@ -52,7 +52,7 @@ function fakeRepo(prs: PullRequest[]): Repo {
     isFork: false, pushedAt: null, language: null, languageColor: null, openCount: prs.length, prs };
 }
 
-const ctx = (): Context => ({ warnings: [], viewer: "len", rate: null });
+const ctx = (): Context => ({ warnings: [], viewer: "len", rate: null, requests: 0, maxRequests: 40 });
 const tokens = { forOwner: async () => "token" };
 const cfg: Config = { ...DEFAULTS };
 
@@ -103,4 +103,72 @@ test("attachBotReviews marks a candidate the fetcher returned nothing for as una
   assert.equal(pr.watcher, null);
   assert.equal(pr.watcherIssue, "unavailable");
   assert.deepEqual(c.warnings, []);
+});
+
+test("ownerQuery and explicitQuery omit viewer when asked", () => {
+  assert.ok(ownerQuery(true).includes("viewer { login }"));
+  assert.ok(!/\bviewer\b/.test(ownerQuery(false)));
+  assert.ok(explicitQuery(2, true).includes("viewer { login }"));
+  assert.ok(!/\bviewer\b/.test(explicitQuery(2, false)));
+  assert.ok(ownerQuery(false).includes("repositoryOwner(login: $login)"));
+});
+
+// ---------------------------------------------------------------- collect with a stubbed fetch
+
+function ownerPage(repos: string[], hasNextPage: boolean): string {
+  return JSON.stringify({
+    data: {
+      repositoryOwner: {
+        login: "o",
+        repositories: {
+          pageInfo: { hasNextPage, endCursor: hasNextPage ? "c" : null },
+          nodes: repos.map((name) => ({
+            nameWithOwner: `o/${name}`, url: `https://github.com/o/${name}`, description: null, isPrivate: false,
+            isArchived: false, isFork: false, pushedAt: null, primaryLanguage: null,
+            pullRequests: { totalCount: 0, nodes: [] },
+          })),
+        },
+      },
+      rateLimit: { limit: 5000, remaining: 4000, resetAt: "x", cost: 50 },
+    },
+  });
+}
+
+async function withFetch<T>(pages: string[], body: () => Promise<T>): Promise<{ result: T; calls: { query: string; variables: Record<string, unknown> }[] }> {
+  const real = globalThis.fetch;
+  const calls: { query: string; variables: Record<string, unknown> }[] = [];
+  let i = 0;
+  globalThis.fetch = (async (_url: unknown, init: RequestInit) => {
+    calls.push(JSON.parse(String(init.body)));
+    const text = pages[Math.min(i++, pages.length - 1)];
+    return new Response(text, { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    return { result: await body(), calls };
+  } finally {
+    globalThis.fetch = real;
+  }
+}
+
+const tokenSource = { default: async () => "t", forOwner: async () => "t" };
+
+test("collect uses viewer_login and drops viewer from the queries", async () => {
+  const c = { ...DEFAULTS, mine: false, owners: ["o"], viewer_login: "len" };
+  const { result, calls } = await withFetch([ownerPage(["a"], false)], () => collect(c, tokenSource));
+  assert.equal(result.viewer, "len");
+  assert.ok(calls.every((q) => !/\bviewer\b/.test(q.query)));
+});
+
+test("collect keeps viewer in the queries when viewer_login is unset", async () => {
+  const c = { ...DEFAULTS, mine: false, owners: ["o"] };
+  const { calls } = await withFetch([ownerPage(["a"], false)], () => collect(c, tokenSource));
+  assert.ok(calls.every((q) => q.query.includes("viewer { login }")));
+});
+
+test("collect stops paginating at the request budget and warns", async () => {
+  const c = { ...DEFAULTS, mine: false, owners: ["o"], max_repos_per_source: 1000 };
+  const { result, calls } = await withFetch([ownerPage(["a"], true)], () => collect(c, tokenSource, undefined, { maxRequests: 3 }));
+  assert.equal(calls.length, 3);
+  assert.ok(result.warnings.some((w) => w.startsWith("Stopped fetching o after 3 GitHub requests")));
+  assert.equal(result.repos.length, 1); // the same repo three times, deduped
 });

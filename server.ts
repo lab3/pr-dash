@@ -17,7 +17,7 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 
 import { CONFIG_PATH, DashError, ROOT, Tokens, loadConfig, type Config } from "./src/config.ts";
-import { collect } from "./src/github.ts";
+import { collect } from "./shared/github.ts";
 import type { ApiError, DashboardData, ViewsPayload } from "./src/types.ts";
 import { exactViewRepos, loadViews, saveViews, validateViews, viewOwners } from "./src/views.ts";
 

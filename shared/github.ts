@@ -1,12 +1,13 @@
 import { botLogin, mergeBlockers, shapeWatcher, type RawBotReview, type RawThread } from "./botreviews.ts";
-import { DashError, type Config, type Tokens } from "./config.ts";
+import { DashError, type Config, type TokenSource } from "./config-core.ts";
 import type {
   CheckState, DashboardData, MergeStateStatus, MergeableState, PullRequest, RateLimit, Repo, ReviewDecision,
-} from "./types.ts";
-import { globToRegExp } from "./views.ts";
+} from "../src/types.ts";
+import { globToRegExp } from "./views-core.ts";
 
-// Override for GitHub Enterprise Server, e.g. https://github.example.com/api/graphql
-const API_URL = process.env.GITHUB_GRAPHQL_URL ?? "https://api.github.com/graphql";
+// Override for GitHub Enterprise Server. Read lazily so the module also loads in a Worker (no `process`).
+const API_URL = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.GITHUB_GRAPHQL_URL
+  ?? "https://api.github.com/graphql";
 const REPO_PAGE_SIZE = 25;
 const EXPLICIT_BATCH = 20;
 const BOT_BATCH = 20;     // PRs per nodes(ids:) query
@@ -71,10 +72,13 @@ query($cursor: String, $n: Int!, $prs: Int!) {
 }
 `;
 
-export const OWNER_QUERY = REPO_FRAGMENT + /* GraphQL */ `
+const viewerField = (on: boolean): string => (on ? "viewer { login }\n" : "");
+
+/** Repos of one user/org, one page. `includeViewer` is false when the token can't answer `viewer` (GitHub Apps). */
+export function ownerQuery(includeViewer: boolean): string {
+  return REPO_FRAGMENT + /* GraphQL */ `
 query($login: String!, $cursor: String, $n: Int!, $prs: Int!) {
-  viewer { login }
-  repositoryOwner(login: $login) {
+  ${viewerField(includeViewer)}repositoryOwner(login: $login) {
     login
     repositories(first: $n, after: $cursor, orderBy: {field: PUSHED_AT, direction: DESC}) {
       pageInfo { hasNextPage endCursor }
@@ -84,8 +88,11 @@ query($login: String!, $cursor: String, $n: Int!, $prs: Int!) {
   rateLimit { limit remaining resetAt cost }
 }
 `;
+}
 
-export function explicitQuery(count: number): string {
+export const OWNER_QUERY = ownerQuery(true);
+
+export function explicitQuery(count: number, includeViewer: boolean): string {
   const decls = ["$prs: Int!"];
   const fields: string[] = [];
   for (let i = 0; i < count; i++) {
@@ -93,7 +100,7 @@ export function explicitQuery(count: number): string {
     fields.push(`r${i}: repository(owner: $o${i}, name: $n${i}) { ...RepoFields }`);
   }
   return REPO_FRAGMENT +
-    `query(${decls.join(", ")}) {\n  viewer { login }\n  ${fields.join("\n  ")}\n  rateLimit { limit remaining resetAt cost }\n}`;
+    `query(${decls.join(", ")}) {\n  ${viewerField(includeViewer)}${fields.join("\n  ")}\n  rateLimit { limit remaining resetAt cost }\n}`;
 }
 
 /** One `nodes(ids:)` query that fetches every configured bot's reviews plus all review threads. */
@@ -217,21 +224,34 @@ export interface Context {
   warnings: string[];
   viewer: string | null;
   rate: RateLimit | null;
+  /** GraphQL requests made so far; `collect` stops paginating at `maxRequests`. */
+  requests: number;
+  maxRequests: number;
+}
+
+async function call(token: string, query: string, variables: Record<string, unknown>, ctx: Context) {
+  ctx.requests++;
+  const out = await graphql(token, query, variables);
+  ctx.warnings.push(...out.errors);
+  ctx.viewer = out.data.viewer?.login ?? ctx.viewer;
+  ctx.rate = out.data.rateLimit ?? ctx.rate;
+  return out.data;
 }
 
 /** Yield repos from a paginated `repositories` connection. Returns false if the owner is missing. */
 async function* paginate(
   token: string, query: string, variables: Record<string, unknown>,
-  pick: (d: QueryData) => RepoConnection | null | undefined, limit: number, ctx: Context,
+  pick: (d: QueryData) => RepoConnection | null | undefined, limit: number, ctx: Context, label: string,
 ): AsyncGenerator<RawRepo, boolean> {
   let cursor: string | null = null;
   let seen = 0;
   while (seen < limit) {
+    if (ctx.requests >= ctx.maxRequests) {
+      ctx.warnings.push(`Stopped fetching ${label} after ${ctx.requests} GitHub requests; raise max_repos_per_source pages later or narrow the sources.`);
+      break;
+    }
     const n = Math.min(REPO_PAGE_SIZE, limit - seen);
-    const { data, errors } = await graphql(token, query, { ...variables, cursor, n });
-    ctx.warnings.push(...errors);
-    ctx.viewer = data.viewer?.login ?? ctx.viewer;
-    ctx.rate = data.rateLimit ?? ctx.rate;
+    const data = await call(token, query, { ...variables, cursor, n }, ctx);
     const conn = pick(data);
     if (!conn) return false;
     for (const repo of conn.nodes ?? []) {
@@ -246,7 +266,7 @@ async function* paginate(
   return true;
 }
 
-async function fetchExplicit(token: string, names: string[], prs: number, ctx: Context): Promise<RawRepo[]> {
+async function fetchExplicit(token: string, names: string[], prs: number, ctx: Context, includeViewer: boolean): Promise<RawRepo[]> {
   const out: RawRepo[] = [];
   for (let start = 0; start < names.length; start += EXPLICIT_BATCH) {
     const batch = names.slice(start, start + EXPLICIT_BATCH);
@@ -256,7 +276,8 @@ async function fetchExplicit(token: string, names: string[], prs: number, ctx: C
       variables[`o${i}`] = owner;
       variables[`n${i}`] = name;
     });
-    const { data, errors } = await graphql(token, explicitQuery(batch.length), variables);
+    ctx.requests++;
+    const { data, errors } = await graphql(token, explicitQuery(batch.length, includeViewer), variables);
     ctx.viewer = data.viewer?.login ?? ctx.viewer;
     ctx.rate = data.rateLimit ?? ctx.rate;
     batch.forEach((full, i) => {
@@ -305,6 +326,7 @@ export async function fetchBotReviews(token: string, ids: string[], bots: string
     const batch = ids.slice(start, start + BOT_BATCH);
     const variables: Record<string, unknown> = { ids: batch };
     bots.forEach((b, i) => { variables[`a${i}`] = b; });
+    ctx.requests++;
     const { data, errors } = await graphql(token, query, variables);
     ctx.warnings.push(...errors);
     ctx.rate = data.rateLimit ?? ctx.rate;
@@ -327,7 +349,7 @@ export async function fetchBotReviews(token: string, ids: string[], bots: string
  * token per owner. A failed fetch becomes a warning so the dashboard still loads.
  */
 export async function attachBotReviews(
-  cfg: Config, tokens: Pick<Tokens, "forOwner">, repos: Repo[], candidates: Map<string, string[]>,
+  cfg: Config, tokens: Pick<TokenSource, "forOwner">, repos: Repo[], candidates: Map<string, string[]>,
   ctx: Context, fetcher: BotFetcher = fetchBotReviews,
 ): Promise<void> {
   const prById = new Map<string, { pr: PullRequest; repo: Repo }>();
@@ -373,21 +395,24 @@ export interface ExtraSources {
  * saved views, explicit `repos` from config, and exact repos from saved views.
  * Explicit repos skip the archived/fork/exclude filters, since you asked for them by name.
  */
-export async function collect(cfg: Config, tokens: Tokens, extra: ExtraSources = { repos: [], owners: [] }):
-  Promise<Omit<DashboardData, "fetchMs" | "generatedAt" | "refreshSeconds">> {
+export async function collect(
+  cfg: Config, tokens: TokenSource, extra: ExtraSources = { repos: [], owners: [] },
+  opts: { maxRequests?: number } = {},
+): Promise<Omit<DashboardData, "fetchMs" | "generatedAt" | "refreshSeconds">> {
   const extraRepos = extra.repos;
   const prs = cfg.prs_per_repo;
   const limit = Number(cfg.max_repos_per_source);
   const repos = new Map<string, RawRepo>();
   const explicit = new Set<string>();
-  const ctx: Context = { warnings: [], viewer: null, rate: null };
+  const includeViewer = !cfg.viewer_login;
+  const ctx: Context = { warnings: [], viewer: cfg.viewer_login ?? null, rate: null, requests: 0, maxRequests: opts.maxRequests ?? 40 };
   const add = (node: RawRepo) => {
     const key = node.nameWithOwner.toLowerCase();
     if (!repos.has(key)) repos.set(key, node);
   };
 
   if (cfg.mine) {
-    const it = paginate(await tokens.default(), VIEWER_QUERY, { prs }, (d) => d.viewer?.repositories, limit, ctx);
+    const it = paginate(await tokens.default(), VIEWER_QUERY, { prs }, (d) => d.viewer?.repositories, limit, ctx, "your repos");
     for await (const node of it) add(node);
   }
 
@@ -395,8 +420,8 @@ export async function collect(cfg: Config, tokens: Tokens, extra: ExtraSources =
   for (const o of [...cfg.owners, ...extra.owners]) if (!owners.has(o.toLowerCase())) owners.set(o.toLowerCase(), o);
   for (const owner of owners.values()) {
     const prefix = owner.toLowerCase() + "/";
-    const it = paginate(await tokens.forOwner(owner), OWNER_QUERY, { prs, login: owner },
-      (d) => d.repositoryOwner?.repositories, limit, ctx);
+    const it = paginate(await tokens.forOwner(owner), ownerQuery(includeViewer), { prs, login: owner },
+      (d) => d.repositoryOwner?.repositories, limit, ctx, owner);
     let step = await it.next();
     while (!step.done) {
       if (step.value.nameWithOwner.toLowerCase().startsWith(prefix)) add(step.value);
@@ -420,7 +445,7 @@ export async function collect(cfg: Config, tokens: Tokens, extra: ExtraSources =
     byOwner.set(owner, [...(byOwner.get(owner) ?? []), full]);
   }
   for (const [owner, group] of byOwner) {
-    for (const node of await fetchExplicit(await tokens.forOwner(owner), group, prs, ctx)) add(node);
+    for (const node of await fetchExplicit(await tokens.forOwner(owner), group, prs, ctx, includeViewer)) add(node);
   }
 
   const excludes = cfg.exclude.map(globToRegExp);
