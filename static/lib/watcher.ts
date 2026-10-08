@@ -51,6 +51,7 @@ export function watcherPanel(pr: PullRequest): HTMLElement | null {
   const w = pr.watcher;
   if (!w) return null;
   const key = pr.url;
+  const earlierKey = key + "#earlier";
   return h("details", {
     class: "wpanel",
     open: state.openPanels.has(key),
@@ -63,7 +64,14 @@ export function watcherPanel(pr: PullRequest): HTMLElement | null {
       w.earlier.length ? h("span", { class: "muted" }, ` · ${w.earlier.length} earlier`) : null),
     reviewBlock(w.latest),
     w.earlier.length
-      ? h("details", { class: "wearlier" },
+      ? h("details", {
+        class: "wearlier",
+        open: state.openPanels.has(earlierKey),
+        ontoggle: (e: Event) => {
+          if ((e.currentTarget as HTMLDetailsElement).open) state.openPanels.add(earlierKey);
+          else state.openPanels.delete(earlierKey);
+        },
+      },
         h("summary", null, `Earlier reviews (${w.earlier.length})`),
         w.earlier.map(reviewBlock))
       : null,
