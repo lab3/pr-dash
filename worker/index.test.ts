@@ -131,6 +131,7 @@ test("views round-trip; a new owner triggers a background refresh; writes need t
 
 test("GET /api/config strips secrets; PUT refuses to drop the caller's email", async () => {
   const { env, waits } = setup();
+  collectCalls = 0;
   const got = (await (await handle(req("/api/config"), env, ctxOf(waits), deps)).json()) as Record<string, unknown>;
   assert.equal("tokens" in got, false);
   assert.equal("allowed_emails" in got, false);
@@ -141,6 +142,19 @@ test("GET /api/config strips secrets; PUT refuses to drop the caller's email", a
   const ok = await handle(req("/api/config", { method: "PUT", body: JSON.stringify({ owners: ["o", "p"], allowed_emails: ["len@bitfly.org"] }), headers }), env, ctxOf(waits), deps);
   assert.equal(ok.status, 200);
   await Promise.all(waits);
+  assert.equal(collectCalls, 1, "config PUT triggers a refresh");
   const after = (await (await handle(req("/api/config"), env, ctxOf(waits), deps)).json()) as Record<string, unknown>;
   assert.deepEqual(after.owners, ["o", "p"]);
+});
+
+test("PUT /api/config merges over the stored config, so tokens survive", async () => {
+  const { env, kv, waits } = setup();
+  kv.store.set("config", JSON.stringify({ owners: ["o"], allowed_emails: ["len@bitfly.org"], viewer_login: "len", tokens: { o: "app:5" } }));
+  const headers = { "content-type": "application/json", "x-pr-dash": "1", origin: `https://${HOST}` };
+  const res = await handle(req("/api/config", { method: "PUT", body: JSON.stringify({ owners: ["o", "p"], allowed_emails: ["len@bitfly.org"] }), headers }), env, ctxOf(waits), deps);
+  assert.equal(res.status, 200);
+  await Promise.all(waits);
+  const stored = JSON.parse(kv.store.get("config") as string) as { tokens: unknown; owners: unknown };
+  assert.deepEqual(stored.tokens, { o: "app:5" });
+  assert.deepEqual(stored.owners, ["o", "p"]);
 });

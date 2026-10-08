@@ -55,6 +55,10 @@ async function readJson(request: Request, limit = 256 * 1024): Promise<unknown> 
   }
 }
 
+const logBackground = (e: unknown): void => {
+  console.error(`pr-dash: background refresh failed: ${(e as Error).message ?? e}`);
+};
+
 async function api(request: Request, url: URL, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }, email: string, refresh: RefreshDeps | undefined): Promise<Response> {
   const kv = env.PRDASH;
   const run = () => runRefresh(env, refresh);
@@ -86,7 +90,7 @@ async function api(request: Request, url: URL, env: Env, ctx: { waitUntil(p: Pro
     await kv.put("views", JSON.stringify({ views }));
     const had = new Set([...viewOwners(before), ...exactViewRepos(before)].map((s) => s.toLowerCase()));
     const added = [...viewOwners(views), ...exactViewRepos(views)].some((s) => !had.has(s.toLowerCase()));
-    if (added) ctx.waitUntil(run().catch(() => undefined));
+    if (added) ctx.waitUntil(run().catch(logBackground));
     return json(200, { views });
   }
 
@@ -95,12 +99,13 @@ async function api(request: Request, url: URL, env: Env, ctx: { waitUntil(p: Pro
     assertWritable(request);
     const body = await readJson(request);
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new DashError("Config must be a JSON object.", null, 400);
-    const cfg: Config = normalizeConfig({ ...DEFAULTS, ...(body as Partial<Config>) });
+    const stored = ((await kv.get("config", "json")) ?? {}) as Partial<Config>;
+    const cfg: Config = normalizeConfig({ ...DEFAULTS, ...stored, ...(body as Partial<Config>) });
     if (!cfg.allowed_emails.includes(email)) {
       throw new DashError("allowed_emails must include your own email, or you would lock yourself out.", null, 400);
     }
     await kv.put("config", JSON.stringify(cfg));
-    ctx.waitUntil(run().catch(() => undefined));
+    ctx.waitUntil(run().catch(logBackground));
     return json(200, publicConfig(cfg));
   }
 
@@ -111,7 +116,10 @@ export async function handle(
   request: Request, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }, deps: HandlerDeps = {},
 ): Promise<Response> {
   // Read the allowlist before verifying, so one KV read serves both the gate and the routes.
-  const cfg = await readConfig(env.PRDASH).catch(() => ({ ...DEFAULTS, allowed_emails: [] as string[] }));
+  const cfg = await readConfig(env.PRDASH).catch((e: unknown) => {
+    console.error(`pr-dash: config unreadable, denying all requests: ${(e as Error).message ?? e}`);
+    return { ...DEFAULTS, allowed_emails: [] as string[] };
+  });
   const access = await verifyAccess(request, env, cfg.allowed_emails, deps.access);
   if (!access.ok) return withHeaders(access.response);
 
