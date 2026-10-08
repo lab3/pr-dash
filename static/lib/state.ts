@@ -149,11 +149,11 @@ export function watcherMatch(pr: PullRequest, value: string): boolean {
   }
 }
 
-function prVisible(pr: PullRequest, repo: Repo, terms: string[]): boolean {
+function prVisible(pr: PullRequest, repo: Repo, terms: string[], watcherOn: boolean): boolean {
   if (state.hideDrafts && pr.isDraft) return false;
   if (state.onlyReview && !pr.reviewRequestedFromMe) return false;
   if (state.onlyMine && !pr.isMine) return false;
-  if (state.onlyWatcher && !(pr.watcher && pr.watcher.open > 0)) return false;
+  if (watcherOn && !(pr.watcher && pr.watcher.open > 0)) return false;
   if (!terms.length) return true;
   const hay = [repo.name, pr.title, "#" + pr.number, pr.author, pr.head ?? "", pr.base ?? "",
     ...pr.labels.map((l) => l.name)].join(" ").toLowerCase();
@@ -164,13 +164,14 @@ export function compute(data: DashboardData): Computed {
   const view = activeView();
   const scoped = !!view;
   const q = state.filter.trim().toLowerCase();
+  const watcherOn = state.onlyWatcher && data.botReviews;
   const terms = q ? q.split(/\s+/) : [];
   const inView = reposIn(data, view);
   const owners = ownersIn(inView);
   // The owner quick filter only applies if that owner has repos in this view.
   const ownerActive = !!state.owner && owners.some((o) => o.owner.toLowerCase() === state.owner.toLowerCase());
   const repos = ownerActive ? inView.filter((r) => ownerOf(r.name).toLowerCase() === state.owner.toLowerCase()) : inView;
-  const prFilterOn = !!q || state.hideDrafts || state.onlyReview || state.onlyMine || state.onlyWatcher;
+  const prFilterOn = !!q || state.hideDrafts || state.onlyReview || state.onlyMine || watcherOn;
   const withPrs: RepoView[] = [];
   const empty: Repo[] = [];
   // Repos named one by one in a saved view always show, even with no PRs. Repos that
@@ -178,7 +179,7 @@ export function compute(data: DashboardData): Computed {
   // org doesn't flood the page with empty cards.
   const named = new Set((view?.repos ?? []).filter((r) => !isPattern(r)).map((r) => r.toLowerCase()));
   for (const repo of repos) {
-    const prs = repo.prs.filter((pr) => prVisible(pr, repo, terms));
+    const prs = repo.prs.filter((pr) => prVisible(pr, repo, terms, watcherOn));
     if (prs.length) withPrs.push({ repo, prs });
     else if (repo.openCount === 0 && (state.showEmpty || named.has(repo.name.toLowerCase()))
       && (!q || repo.name.toLowerCase().includes(q))) empty.push(repo);
