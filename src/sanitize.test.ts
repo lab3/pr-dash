@@ -66,3 +66,26 @@ test("keeps tables and removes comments", () => {
 test("keeps br and hr as void tags", () => {
   assert.equal(sanitizeHtml("a<br>b<hr>c"), "a<br>b<hr>c");
 });
+
+test("self-closing or void drop-content tags do not swallow the rest", () => {
+  assert.equal(sanitizeHtml("<p>a</p><script/><p>b</p>"), "<p>a</p><p>b</p>");
+  assert.equal(sanitizeHtml("<p>a</p><embed src=x><p>b</p>"), "<p>a</p><p>b</p>");
+  assert.equal(sanitizeHtml("<p>a</p><style/><p>b</p>"), "<p>a</p><p>b</p>");
+});
+
+test("hostile inputs never produce active markup", () => {
+  assert.equal(sanitizeHtml("<SCRIPT>x</SCRIPT><P>ok</P>"), "<p>ok</p>");
+  assert.equal(sanitizeHtml("<p>a</p><script>never closed"), "<p>a</p>");
+  assert.equal(sanitizeHtml("<svg><img src=x onerror=1></svg><iframe src=x>t</iframe>z"), "z");
+  assert.equal(sanitizeHtml("<svg><svg></svg><img onerror=1></svg>z"), "z");
+  assert.equal(
+    sanitizeHtml('<a href="https://x/&quot;onmouseover=&quot;1">k</a>'),
+    '<a href="https://x/&quot;onmouseover=&quot;1" target="_blank" rel="noopener">k</a>',
+  );
+  const out = sanitizeHtml('<a href="https://x/><img src=x onerror=1>">k</a>');
+  assert.ok(out.startsWith('<a href="https://x/><img src=x onerror=1>" target="_blank" rel="noopener">'));
+  assert.equal((out.match(/<img/g) ?? []).length, 1);
+  assert.ok(out.indexOf("<img") < out.indexOf('" target='));
+  assert.equal(sanitizeHtml('<a href="HTTPS://x">k</a>'), '<a href="HTTPS://x" target="_blank" rel="noopener">k</a>');
+  assert.equal(sanitizeHtml('<a href="&#106;avascript:alert(1)">k</a>'), "k");
+});

@@ -37,7 +37,8 @@ export function sanitizeHtml(input: string): string {
       continue;
     }
     if (DROP_CONTENT.has(name)) {
-      if (!closing) skipping = name;
+      const selfClosing = /\/\s*>$/.test(m[0]) || name === "embed";
+      if (!closing && !selfClosing) skipping = name;
       continue;
     }
     const tag = RENAME[name] ?? name;
