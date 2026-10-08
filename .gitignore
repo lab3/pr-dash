@@ -2,3 +2,5 @@ config.json
 .DS_Store
 node_modules/
 views.json
+.superpowers/
+.claude/worktrees/
