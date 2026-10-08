@@ -36,6 +36,9 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
+          # Let the PR Watcher bot tag @claude. The action rejects bot actors unless listed here.
+          allowed_bots: "grok-pr-watcher[bot]"
+
           # This is an optional setting that allows Claude to read CI results on PRs
           additional_permissions: |
             actions: read
