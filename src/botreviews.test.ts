@@ -163,29 +163,42 @@ test("shapeWatcher orders reviews newest first and lifts old open findings to pa
 
 // ---------------------------------------------------------------- mergeBlockers
 
-const base = { isDraft: false, review: null, ci: "SUCCESS" as const, mergeable: "MERGEABLE" as const, mergeState: "CLEAN" as const, watcher: null };
+const base = { isDraft: false, review: null, ci: "SUCCESS" as const, mergeable: "MERGEABLE" as const, mergeState: "CLEAN" as const, watcher: null, watcherIssue: null };
 const withOpen = (open: number) => ({ status: "open" as const, open, total: open, nits: 0, stale: false,
   latest: {} as never, earlier: [] });
 
-test("mergeBlockers: clean PR with no Watcher review is ready", () => {
-  assert.deepEqual(mergeBlockers(base), []);
-  assert.deepEqual(mergeBlockers({ ...base, ci: null }), []);
+test("mergeBlockers: clean PR with no Watcher review is ready when bot reviews are off", () => {
+  assert.deepEqual(mergeBlockers(base, false), []);
+  assert.deepEqual(mergeBlockers({ ...base, ci: null }, false), []);
 });
 
 test("mergeBlockers lists each blocker in display order", () => {
   assert.deepEqual(
-    mergeBlockers({ ...base, watcher: withOpen(2), isDraft: true, review: "CHANGES_REQUESTED", ci: "PENDING", mergeable: "CONFLICTING" }),
+    mergeBlockers({ ...base, watcher: withOpen(2), isDraft: true, review: "CHANGES_REQUESTED", ci: "PENDING", mergeable: "CONFLICTING" }, false),
     ["2 open findings", "draft", "changes requested", "CI pending", "conflicts"],
   );
-  assert.deepEqual(mergeBlockers({ ...base, watcher: withOpen(1), ci: "FAILURE" }), ["1 open finding", "CI failing"]);
+  assert.deepEqual(mergeBlockers({ ...base, watcher: withOpen(1), ci: "FAILURE" }, false), ["1 open finding", "CI failing"]);
 });
 
 test("mergeBlockers: UNKNOWN mergeability is not ready", () => {
-  assert.deepEqual(mergeBlockers({ ...base, mergeable: "UNKNOWN" }), ["merge check pending"]);
-  assert.deepEqual(mergeBlockers({ ...base, mergeable: null }), ["merge check pending"]);
+  assert.deepEqual(mergeBlockers({ ...base, mergeable: "UNKNOWN" }, false), ["merge check pending"]);
+  assert.deepEqual(mergeBlockers({ ...base, mergeable: null }, false), ["merge check pending"]);
 });
 
 test("mergeBlockers: branch protection states", () => {
-  assert.deepEqual(mergeBlockers({ ...base, mergeState: "BLOCKED" }), ["blocked by branch rules"]);
-  assert.deepEqual(mergeBlockers({ ...base, mergeState: "BEHIND" }), ["behind base"]);
+  assert.deepEqual(mergeBlockers({ ...base, mergeState: "BLOCKED" }, false), ["blocked by branch rules"]);
+  assert.deepEqual(mergeBlockers({ ...base, mergeState: "BEHIND" }, false), ["behind base"]);
+});
+
+test("mergeBlockers: a missing Watcher review blocks when bot reviews are on", () => {
+  assert.deepEqual(mergeBlockers(base, true), ["no Watcher review"]);
+});
+
+test("mergeBlockers: missing or capped Watcher data blocks", () => {
+  assert.deepEqual(mergeBlockers({ ...base, watcherIssue: "unavailable" }, true), ["Watcher data unavailable"]);
+  assert.deepEqual(mergeBlockers({ ...base, watcherIssue: "unavailable" }, false), ["Watcher data unavailable"]);
+  const addressed = { ...withOpen(0), status: "addressed" as const };
+  assert.deepEqual(mergeBlockers({ ...base, watcher: addressed, watcherIssue: "capped" }, true), ["Watcher findings incomplete"]);
+  assert.deepEqual(mergeBlockers({ ...base, watcher: withOpen(2), watcherIssue: "capped" }, true),
+    ["2 open findings", "Watcher findings incomplete"]);
 });

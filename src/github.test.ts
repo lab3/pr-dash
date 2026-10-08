@@ -18,7 +18,7 @@ test("botReviewsQuery has one aliased reviews field per bot", () => {
   assert.ok(q.includes("b0: reviews(author: $a0, last: 10)"));
   assert.ok(q.includes("b1: reviews(author: $a1, last: 10)"));
   assert.ok(q.includes("nodes(ids: $ids)"));
-  assert.ok(q.includes("reviewThreads(first: 50)"));
+  assert.ok(q.includes("reviewThreads(last: 50)"));
   assert.ok(q.includes("pullRequestReview { id }"));
 });
 
@@ -32,7 +32,7 @@ test("hasBotReview matches the bare GraphQL login against the [bot] config form"
 
 test("capWarning only fires past the thread cap", () => {
   assert.equal(capWarning("o/r#1", 50), null);
-  assert.equal(capWarning("o/r#1", 51), "o/r#1: only the first 50 of 51 review threads were checked.");
+  assert.equal(capWarning("o/r#1", 51), "o/r#1: only the newest 50 of 51 review threads were checked.");
 });
 
 // ---------------------------------------------------------------- attachBotReviews
@@ -43,7 +43,7 @@ function fakePr(id: string, number: number): PullRequest {
     createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-08T00:00:00Z", head: "f", base: "main",
     review: null, ci: "SUCCESS", additions: 1, deletions: 1, comments: 0, author: "len", authorUrl: null,
     avatar: null, labels: [], requestedReviewers: [], requestedTeams: [], isMine: false, reviewRequestedFromMe: false,
-    headOid: "head1", mergeable: "MERGEABLE", mergeState: "CLEAN", watcher: null, blockers: [],
+    headOid: "head1", mergeable: "MERGEABLE", mergeState: "CLEAN", watcher: null, watcherIssue: null, blockers: [],
   };
 }
 
@@ -80,7 +80,9 @@ test("attachBotReviews fills watcher for fetched PRs and warns past the cap", as
   assert.equal(pr.watcher?.status, "open");
   assert.deepEqual([pr.watcher?.open, pr.watcher?.total], [1, 1]);
   assert.equal(repos[0].prs[1].watcher, null);
-  assert.deepEqual(c.warnings, ["o/r#1: only the first 50 of 60 review threads were checked."]);
+  assert.equal(pr.watcherIssue, "capped");
+  assert.equal(repos[0].prs[1].watcherIssue, null);
+  assert.deepEqual(c.warnings, ["o/r#1: only the newest 50 of 60 review threads were checked."]);
 });
 
 test("attachBotReviews turns a failed fetch into a warning and leaves PRs intact", async () => {
@@ -89,5 +91,16 @@ test("attachBotReviews turns a failed fetch into a warning and leaves PRs intact
   const fetcher = async (): Promise<Map<string, BotReviewRaw>> => { throw new Error("rate limited"); };
   await attachBotReviews(cfg, tokens, [fakeRepo([pr])], new Map([["o", ["PR_1"]]]), c, fetcher);
   assert.equal(pr.watcher, null);
+  assert.equal(pr.watcherIssue, "unavailable");
   assert.deepEqual(c.warnings, ["Watcher reviews unavailable for o: rate limited"]);
+});
+
+test("attachBotReviews marks a candidate the fetcher returned nothing for as unavailable", async () => {
+  const pr = fakePr("PR_1", 1);
+  const c = ctx();
+  const fetcher = async (): Promise<Map<string, BotReviewRaw>> => new Map();
+  await attachBotReviews(cfg, tokens, [fakeRepo([pr])], new Map([["o", ["PR_1"]]]), c, fetcher);
+  assert.equal(pr.watcher, null);
+  assert.equal(pr.watcherIssue, "unavailable");
+  assert.deepEqual(c.warnings, []);
 });

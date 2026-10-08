@@ -90,6 +90,9 @@ export interface PullRequest {
   mergeState: MergeStateStatus | null;
   /** null when the PR has no review from a configured bot. */
   watcher: WatcherSummary | null;
+  /** Why `watcher` may be missing or incomplete: the second fetch failed or returned nothing
+   *  for this PR ("unavailable"), or the PR has more review threads than we fetch ("capped"). */
+  watcherIssue: "unavailable" | "capped" | null;
   /** Why the PR isn't ready to merge, in display order. Empty means ready. */
   blockers: string[];
 }

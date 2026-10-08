@@ -142,15 +142,20 @@ export function shapeWatcher(reviews: RawBotReview[], threads: RawThread[], head
 
 /**
  * Why a PR isn't ready to merge, in display order. Empty means "Ready to merge": no open
- * Watcher findings, not a draft, nobody requesting changes, CI passing or absent, GitHub
- * says MERGEABLE, and branch protection isn't holding it.
+ * Watcher findings, a Watcher review exists (when bot reviews are on) and its data is
+ * complete, not a draft, nobody requesting changes, CI passing or absent, GitHub says
+ * MERGEABLE, and branch protection isn't holding it.
  */
 export function mergeBlockers(
-  pr: Pick<PullRequest, "isDraft" | "review" | "ci" | "mergeable" | "mergeState" | "watcher">,
+  pr: Pick<PullRequest, "isDraft" | "review" | "ci" | "mergeable" | "mergeState" | "watcher" | "watcherIssue">,
+  botReviews: boolean,
 ): string[] {
   const out: string[] = [];
   const open = pr.watcher?.open ?? 0;
   if (open) out.push(`${open} open finding${open === 1 ? "" : "s"}`);
+  if (pr.watcherIssue === "unavailable") out.push("Watcher data unavailable");
+  else if (pr.watcherIssue === "capped") out.push("Watcher findings incomplete");
+  else if (botReviews && !pr.watcher) out.push("no Watcher review");
   if (pr.isDraft) out.push("draft");
   if (pr.review === "CHANGES_REQUESTED") out.push("changes requested");
   if (pr.ci === "FAILURE" || pr.ci === "ERROR") out.push("CI failing");

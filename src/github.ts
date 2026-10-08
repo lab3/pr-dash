@@ -67,7 +67,7 @@ query($cursor: String, $n: Int!, $prs: Int!) {
       nodes { ...RepoFields }
     }
   }
-  rateLimit { limit remaining resetAt }
+  rateLimit { limit remaining resetAt cost }
 }
 `;
 
@@ -81,7 +81,7 @@ query($login: String!, $cursor: String, $n: Int!, $prs: Int!) {
       nodes { ...RepoFields }
     }
   }
-  rateLimit { limit remaining resetAt }
+  rateLimit { limit remaining resetAt cost }
 }
 `;
 
@@ -93,7 +93,7 @@ export function explicitQuery(count: number): string {
     fields.push(`r${i}: repository(owner: $o${i}, name: $n${i}) { ...RepoFields }`);
   }
   return REPO_FRAGMENT +
-    `query(${decls.join(", ")}) {\n  viewer { login }\n  ${fields.join("\n  ")}\n  rateLimit { limit remaining resetAt }\n}`;
+    `query(${decls.join(", ")}) {\n  viewer { login }\n  ${fields.join("\n  ")}\n  rateLimit { limit remaining resetAt cost }\n}`;
 }
 
 /** One `nodes(ids:)` query that fetches every configured bot's reviews plus all review threads. */
@@ -109,7 +109,7 @@ export function botReviewsQuery(botCount: number): string {
     ... on PullRequest {
       id
       ${fields.join("\n      ")}
-      reviewThreads(first: ${THREAD_CAP}) {
+      reviewThreads(last: ${THREAD_CAP}) {
         totalCount
         nodes {
           isResolved isOutdated path line
@@ -121,7 +121,7 @@ export function botReviewsQuery(botCount: number): string {
       }
     }
   }
-  rateLimit { limit remaining resetAt }
+  rateLimit { limit remaining resetAt cost }
 }`;
 }
 
@@ -294,7 +294,7 @@ export function hasBotReview(pr: Pick<RawPR, "latestReviews">, bots: Set<string>
 }
 
 export function capWarning(name: string, total: number): string | null {
-  return total > THREAD_CAP ? `${name}: only the first ${THREAD_CAP} of ${total} review threads were checked.` : null;
+  return total > THREAD_CAP ? `${name}: only the newest ${THREAD_CAP} of ${total} review threads were checked.` : null;
 }
 
 /** Fetch bot reviews and review threads for a list of PR node ids, BOT_BATCH at a time. */
@@ -338,6 +338,10 @@ export async function attachBotReviews(
       got = await fetcher(await tokens.forOwner(owner), ids, cfg.bot_reviewers, ctx);
     } catch (e) {
       ctx.warnings.push(`Watcher reviews unavailable for ${owner}: ${(e as Error).message}`);
+      for (const id of ids) {
+        const hit = prById.get(id);
+        if (hit) hit.pr.watcherIssue = "unavailable";
+      }
       continue;
     }
     for (const [id, raw] of got) {
@@ -346,6 +350,11 @@ export async function attachBotReviews(
       hit.pr.watcher = shapeWatcher(raw.reviews, raw.threads, hit.pr.headOid);
       const warn = capWarning(`${hit.repo.name}#${hit.pr.number}`, raw.threadTotal);
       if (warn) ctx.warnings.push(warn);
+      if (raw.threadTotal > THREAD_CAP) hit.pr.watcherIssue = "capped";
+    }
+    for (const id of ids) {
+      const hit = prById.get(id);
+      if (hit && !got.has(id)) hit.pr.watcherIssue = "unavailable";
     }
   }
 }
@@ -433,10 +442,10 @@ export async function collect(cfg: Config, tokens: Tokens, extra: ExtraSources =
     }
   }
   if (candidates.size) await attachBotReviews(cfg, tokens, result, candidates, ctx);
-  for (const repo of result) for (const pr of repo.prs) pr.blockers = mergeBlockers(pr);
+  for (const repo of result) for (const pr of repo.prs) pr.blockers = mergeBlockers(pr, botsOn);
 
   const warnings = [...new Set(ctx.warnings.filter((w) => !w.includes("Could not resolve to a RepositoryOwner")))].sort();
-  return { viewer: ctx.viewer, rateLimit: ctx.rate, warnings, repos: result, botReviews: cfg.bot_reviews };
+  return { viewer: ctx.viewer, rateLimit: ctx.rate, warnings, repos: result, botReviews: botsOn };
 }
 
 // --------------------------------------------------------------------------- shaping
@@ -494,6 +503,7 @@ function shapePr(pr: RawPR, viewer: string | null): PullRequest {
     mergeable: pr.mergeable ?? null,
     mergeState: pr.mergeStateStatus ?? null,
     watcher: null,
+    watcherIssue: null,
     blockers: [],
   };
 }

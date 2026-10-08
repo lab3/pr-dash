@@ -42,7 +42,7 @@ export function mergeIndicator(pr: PullRequest): HTMLElement {
   const ready = pr.blockers.length === 0;
   return h("span", {
     class: "merge " + (ready ? "ready" : "blocked"),
-    title: ready ? "Watcher clear, mergeable, CI passing, not a draft, no changes requested" : "Blocking: " + pr.blockers.join(", "),
+    title: ready ? "No open Watcher findings, mergeable, up to date, CI passing, not a draft, no changes requested" : "Blocking: " + pr.blockers.join(", "),
   }, h("span", { class: "dot" }), ready ? "Ready to merge" : pr.blockers.join(" · "));
 }
 
