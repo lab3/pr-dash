@@ -4,7 +4,7 @@ import { store } from "./dom.ts";
 
 export type SortKey = "count" | "updated" | "name";
 export type Layout = "list" | "grid";
-export type ToggleKey = "hideDrafts" | "onlyReview" | "onlyMine" | "showEmpty";
+export type ToggleKey = "hideDrafts" | "onlyReview" | "onlyMine" | "showEmpty" | "onlyWatcher";
 
 export const ALL_VIEW = "all";
 
@@ -21,9 +21,12 @@ export interface State {
   onlyReview: boolean;
   onlyMine: boolean;
   showEmpty: boolean;
+  onlyWatcher: boolean;   // only PRs with open Watcher findings
   owner: string; // "" = all owners (quick filter, applies within any view)
   collapsed: Set<string>;
   expanded: Set<string>;
+  openPanels: Set<string>;     // PR urls whose Watcher panel is open (not persisted)
+  expandedBodies: Set<string>; // review ids whose summary is fully shown (not persisted)
   timer: number | undefined;
 }
 
@@ -42,7 +45,10 @@ export const state: State = {
   showEmpty: store.get("showEmpty", false),
   owner: store.get("owner", ""),
   collapsed: new Set(store.get<string[]>("collapsed", [])),
+  onlyWatcher: store.get("onlyWatcher", false),
   expanded: new Set(),
+  openPanels: new Set(),
+  expandedBodies: new Set(),
   timer: undefined,
 };
 
@@ -126,28 +132,46 @@ export interface Computed {
   owners: { owner: string; repos: number; prs: number }[]; // owners in the view, for the owner filter
   ownerActive: boolean;   // owner quick filter applies to this view
   prFilterOn: boolean;
+  botReviews: boolean;    // bot_reviews is on, so Watcher chrome should show
 }
 
-function prVisible(pr: PullRequest, repo: Repo, q: string): boolean {
+/**
+ * `watcher:<value>` search tokens. "open" = has open findings, "none" = no Watcher review,
+ * otherwise the PR's overall status ("addressed", "partly", "summary").
+ */
+export function watcherMatch(pr: PullRequest, value: string): boolean {
+  const w = pr.watcher;
+  switch (value) {
+    case "open": return !!w && w.open > 0;
+    case "none": return !w;
+    case "addressed": case "partly": case "summary": return w?.status === value;
+    default: return true; // unknown value: don't filter anything out
+  }
+}
+
+function prVisible(pr: PullRequest, repo: Repo, terms: string[], watcherOn: boolean): boolean {
   if (state.hideDrafts && pr.isDraft) return false;
   if (state.onlyReview && !pr.reviewRequestedFromMe) return false;
   if (state.onlyMine && !pr.isMine) return false;
-  if (!q) return true;
+  if (watcherOn && !(pr.watcher && pr.watcher.open > 0)) return false;
+  if (!terms.length) return true;
   const hay = [repo.name, pr.title, "#" + pr.number, pr.author, pr.head ?? "", pr.base ?? "",
     ...pr.labels.map((l) => l.name)].join(" ").toLowerCase();
-  return q.split(/\s+/).every((t) => hay.includes(t));
+  return terms.every((t) => (t.startsWith("watcher:") ? watcherMatch(pr, t.slice("watcher:".length)) : hay.includes(t)));
 }
 
 export function compute(data: DashboardData): Computed {
   const view = activeView();
   const scoped = !!view;
   const q = state.filter.trim().toLowerCase();
+  const watcherOn = state.onlyWatcher && data.botReviews;
+  const terms = q ? q.split(/\s+/) : [];
   const inView = reposIn(data, view);
   const owners = ownersIn(inView);
   // The owner quick filter only applies if that owner has repos in this view.
   const ownerActive = !!state.owner && owners.some((o) => o.owner.toLowerCase() === state.owner.toLowerCase());
   const repos = ownerActive ? inView.filter((r) => ownerOf(r.name).toLowerCase() === state.owner.toLowerCase()) : inView;
-  const prFilterOn = !!q || state.hideDrafts || state.onlyReview || state.onlyMine;
+  const prFilterOn = !!q || state.hideDrafts || state.onlyReview || state.onlyMine || watcherOn;
   const withPrs: RepoView[] = [];
   const empty: Repo[] = [];
   // Repos named one by one in a saved view always show, even with no PRs. Repos that
@@ -155,7 +179,7 @@ export function compute(data: DashboardData): Computed {
   // org doesn't flood the page with empty cards.
   const named = new Set((view?.repos ?? []).filter((r) => !isPattern(r)).map((r) => r.toLowerCase()));
   for (const repo of repos) {
-    const prs = repo.prs.filter((pr) => prVisible(pr, repo, q));
+    const prs = repo.prs.filter((pr) => prVisible(pr, repo, terms, watcherOn));
     if (prs.length) withPrs.push({ repo, prs });
     else if (repo.openCount === 0 && (state.showEmpty || named.has(repo.name.toLowerCase()))
       && (!q || repo.name.toLowerCase().includes(q))) empty.push(repo);
@@ -169,7 +193,7 @@ export function compute(data: DashboardData): Computed {
   withPrs.sort(sorters[state.sort] ?? sorters.count);
   empty.sort((a, b) => a.name.localeCompare(b.name));
   return {
-    scoped, repos, withPrs, empty, owners, ownerActive, prFilterOn,
+    scoped, repos, withPrs, empty, owners, ownerActive, prFilterOn, botReviews: data.botReviews,
     missing: missingIn(data, view),
     missingOwners: missingOwnersIn(data, view),
   };

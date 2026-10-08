@@ -29,6 +29,10 @@ export interface Config {
   cache_seconds: number;
   /** How often the page auto-refreshes. */
   refresh_seconds: number;
+  /** Fetch bot (PR Watcher) reviews and show their status. */
+  bot_reviews: boolean;
+  /** Bot logins whose reviews count, in GitHub's "[bot]" form. */
+  bot_reviewers: string[];
 }
 
 export const DEFAULTS: Config = {
@@ -45,6 +49,8 @@ export const DEFAULTS: Config = {
   port: 8787,
   cache_seconds: 120,
   refresh_seconds: 300,
+  bot_reviews: true,
+  bot_reviewers: ["grok-pr-watcher[bot]"],
 };
 
 export class DashError extends Error {
@@ -75,8 +81,18 @@ export function loadConfig(): Config {
       if (!k.startsWith("_")) (cfg as unknown as Record<string, unknown>)[k] = v;
     }
   }
-  cfg.prs_per_repo = Math.max(1, Math.min(100, Math.trunc(Number(cfg.prs_per_repo)) || 50));
-  return cfg;
+  return normalizeConfig(cfg);
+}
+
+/** Coerce user-supplied values into the shapes the rest of the app assumes. */
+export function normalizeConfig(cfg: Config): Config {
+  const out = { ...cfg };
+  out.prs_per_repo = Math.max(1, Math.min(100, Math.trunc(Number(cfg.prs_per_repo)) || 50));
+  out.bot_reviews = cfg.bot_reviews !== false;
+  out.bot_reviewers = Array.isArray(cfg.bot_reviewers)
+    ? cfg.bot_reviewers.map((b) => String(b).trim()).filter(Boolean)
+    : DEFAULTS.bot_reviewers;
+  return out;
 }
 
 // --------------------------------------------------------------------------- tokens

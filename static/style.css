@@ -376,3 +376,63 @@ dialog.editor::backdrop { background: rgba(10, 12, 16, .45); }
 .gcard-stats .gstat { background: var(--panel); }
 .gcard-head .count.zero { background: var(--panel); }
 .repo-head { background: var(--card-head); border-bottom-color: var(--card-head-border); }
+
+/* ---------- Watcher reviews ---------- */
+.badge.w-open { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+.badge.w-partly { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, transparent); }
+.badge.w-addressed { color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, transparent); }
+.badge.w-summary { color: var(--muted); }
+.badge.nits { color: var(--muted); background: var(--panel-2); }
+.badge.stale { color: var(--amber); border-style: dashed; }
+
+.merge { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-size: 12px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+.merge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.merge.ready { color: var(--green); font-weight: 600; }
+.merge.ready .dot { background: var(--green); }
+.merge.blocked { color: var(--muted); }
+
+.wpanel { grid-column: 1 / -1; margin-top: 4px; font-size: 13px; }
+.wpanel > summary { cursor: pointer; color: var(--muted); font-size: 12.5px; user-select: none; }
+.wpanel > summary:hover { color: var(--text); }
+.wreview { margin: 8px 0 0; padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; }
+.wreview-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-bottom: 8px; font-size: 12.5px; }
+.wearlier { margin-top: 8px; }
+.wearlier > summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+
+.md { line-height: 1.5; overflow-wrap: anywhere; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol, .md blockquote, .md pre, .md table { margin: 6px 0; }
+.md h3, .md h4 { margin: 10px 0 4px; font-size: 13.5px; }
+.md ul, .md ol { padding-left: 20px; }
+.md code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--panel); padding: 1px 5px; border-radius: 4px; }
+.md pre { background: var(--panel); padding: 8px 10px; border-radius: 6px; overflow: auto; }
+.md pre code { padding: 0; background: none; }
+.md blockquote { border-left: 3px solid var(--border); padding-left: 10px; color: var(--muted); }
+.md table { border-collapse: collapse; }
+.md th, .md td { border: 1px solid var(--border); padding: 3px 8px; }
+.md a { color: var(--accent); }
+.md.clamped { max-height: 240px; overflow: hidden; position: relative; }
+.md.clamped::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 48px;
+  background: linear-gradient(to bottom, transparent, var(--panel-2));
+}
+.wreview .linkish { margin-top: 4px; font-size: 12.5px; }
+
+.findings { list-style: none; margin: 10px 0 0; padding: 0; border-top: 1px solid var(--border); }
+.finding { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.finding:last-child { border-bottom: 0; }
+.fmark { flex: none; width: 14px; text-align: center; font-size: 12px; }
+.f-open .fmark { color: var(--red); }
+.f-outdated .fmark { color: var(--amber); }
+.f-resolved .fmark { color: var(--green); }
+.f-resolved .ftext { color: var(--muted); }
+.floc { font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent); }
+.ftext { flex: 1 1 100%; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.ftext p { margin: 0; display: inline; }
+.freplies { font-size: 12px; }
+.fnone { margin-top: 8px; font-size: 12.5px; }
+.wdot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--muted); flex: none; }
+.wdot.open { background: var(--red); }
+.wdot.partly { background: var(--amber); }
+.wdot.addressed { background: var(--green); }

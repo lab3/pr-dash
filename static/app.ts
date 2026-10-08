@@ -34,6 +34,8 @@ const els = {
   mine: byId<HTMLInputElement>("t-mine"),
   showEmpty: byId<HTMLInputElement>("t-empty"),
   owner: byId<HTMLSelectElement>("owner"),
+  watcher: byId<HTMLInputElement>("t-watcher"),
+  watcherLabel: byId("t-watcher-label"),
 };
 
 // ------------------------------------------------------------------ API
@@ -144,6 +146,7 @@ function render(): void {
   const c = compute(data);
   els.viewer.textContent = data.viewer ? "@" + data.viewer : "";
   renderOwnerFilter(c);
+  els.watcherLabel.hidden = !c.botReviews;
   renderNotice(c);
   renderSummary(c);
   renderContent(c);
@@ -228,6 +231,10 @@ function renderSummary(c: Computed): void {
     stat(prs.filter((p) => p.isMine).length, "yours"),
     stat(prs.filter((p) => p.isDraft).length, "drafts"),
   ];
+  if (c.botReviews) {
+    const open = prs.reduce((n, p) => n + (p.watcher?.open ?? 0), 0);
+    chips.push(stat(open, "open Watcher findings", open ? "attn" : ""));
+  }
   if (c.prFilterOn) chips.push(stat(shown, "match filters", "attn"));
   if (c.ownerActive) {
     chips.push(h("button", {
@@ -281,6 +288,7 @@ bindToggle(els.drafts, "hideDrafts");
 bindToggle(els.review, "onlyReview");
 bindToggle(els.mine, "onlyMine");
 bindToggle(els.showEmpty, "showEmpty");
+bindToggle(els.watcher, "onlyWatcher");
 
 els.sort.value = state.sort;
 els.sort.addEventListener("change", () => {

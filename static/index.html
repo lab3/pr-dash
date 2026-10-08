@@ -15,7 +15,7 @@
       <span id="viewer" class="muted"></span>
     </div>
     <div class="controls">
-      <input id="filter" type="search" placeholder="Filter repos, titles, authors, labels…  ( / )" autocomplete="off">
+      <input id="filter" type="search" placeholder="Filter repos, titles, authors, labels, watcher:open…  ( / )" autocomplete="off">
       <select id="sort" aria-label="Sort repos">
         <option value="count">Most open PRs</option>
         <option value="updated">Recently updated</option>
@@ -47,6 +47,7 @@
       <label><input type="checkbox" id="t-drafts"> Hide drafts</label>
       <label><input type="checkbox" id="t-review"> Only needs my review</label>
       <label><input type="checkbox" id="t-mine"> Only mine</label>
+      <label id="t-watcher-label"><input type="checkbox" id="t-watcher"> Only open Watcher findings</label>
       <label id="t-empty-label"><input type="checkbox" id="t-empty"> Show repos with no PRs</label>
     </div>
   </section>

@@ -1,11 +1,16 @@
+import { botLogin, mergeBlockers, shapeWatcher, type RawBotReview, type RawThread } from "./botreviews.ts";
 import { DashError, type Config, type Tokens } from "./config.ts";
-import type { CheckState, DashboardData, PullRequest, RateLimit, Repo, ReviewDecision } from "./types.ts";
+import type {
+  CheckState, DashboardData, MergeStateStatus, MergeableState, PullRequest, RateLimit, Repo, ReviewDecision,
+} from "./types.ts";
 import { globToRegExp } from "./views.ts";
 
 // Override for GitHub Enterprise Server, e.g. https://github.example.com/api/graphql
 const API_URL = process.env.GITHUB_GRAPHQL_URL ?? "https://api.github.com/graphql";
 const REPO_PAGE_SIZE = 25;
 const EXPLICIT_BATCH = 20;
+const BOT_BATCH = 20;     // PRs per nodes(ids:) query
+const THREAD_CAP = 50;    // review threads fetched per PR
 
 // --------------------------------------------------------------------------- queries
 
@@ -23,6 +28,11 @@ fragment RepoFields on Repository {
     totalCount
     nodes {
       number
+      id
+      headRefOid
+      mergeable
+      mergeStateStatus
+      latestReviews(first: 10) { nodes { author { __typename login } } }
       title
       url
       isDraft
@@ -57,7 +67,7 @@ query($cursor: String, $n: Int!, $prs: Int!) {
       nodes { ...RepoFields }
     }
   }
-  rateLimit { limit remaining resetAt }
+  rateLimit { limit remaining resetAt cost }
 }
 `;
 
@@ -71,7 +81,7 @@ query($login: String!, $cursor: String, $n: Int!, $prs: Int!) {
       nodes { ...RepoFields }
     }
   }
-  rateLimit { limit remaining resetAt }
+  rateLimit { limit remaining resetAt cost }
 }
 `;
 
@@ -83,13 +93,47 @@ export function explicitQuery(count: number): string {
     fields.push(`r${i}: repository(owner: $o${i}, name: $n${i}) { ...RepoFields }`);
   }
   return REPO_FRAGMENT +
-    `query(${decls.join(", ")}) {\n  viewer { login }\n  ${fields.join("\n  ")}\n  rateLimit { limit remaining resetAt }\n}`;
+    `query(${decls.join(", ")}) {\n  viewer { login }\n  ${fields.join("\n  ")}\n  rateLimit { limit remaining resetAt cost }\n}`;
+}
+
+/** One `nodes(ids:)` query that fetches every configured bot's reviews plus all review threads. */
+export function botReviewsQuery(botCount: number): string {
+  const decls = ["$ids: [ID!]!"];
+  const fields: string[] = [];
+  for (let i = 0; i < botCount; i++) {
+    decls.push(`$a${i}: String!`);
+    fields.push(`b${i}: reviews(author: $a${i}, last: 10) { nodes { id state submittedAt url bodyHTML author { __typename login } commit { oid } } }`);
+  }
+  return `query(${decls.join(", ")}) {
+  nodes(ids: $ids) {
+    ... on PullRequest {
+      id
+      ${fields.join("\n      ")}
+      reviewThreads(last: ${THREAD_CAP}) {
+        totalCount
+        nodes {
+          isResolved isOutdated path line
+          comments(first: 1) {
+            totalCount
+            nodes { url body bodyHTML author { __typename login } pullRequestReview { id } }
+          }
+        }
+      }
+    }
+  }
+  rateLimit { limit remaining resetAt cost }
+}`;
 }
 
 // --------------------------------------------------------------------------- raw GitHub shapes
 
-interface RawPR {
+export interface RawPR {
   number: number;
+  id: string;
+  headRefOid: string | null;
+  mergeable: MergeableState | null;
+  mergeStateStatus: MergeStateStatus | null;
+  latestReviews: { nodes: ({ author: { __typename?: string; login: string } | null } | null)[] | null } | null;
   title: string;
   url: string;
   isDraft: boolean;
@@ -169,7 +213,7 @@ export async function graphql(token: string, query: string, variables: Record<st
   return { data: payload.data ?? {}, errors };
 }
 
-interface Context {
+export interface Context {
   warnings: string[];
   viewer: string | null;
   rate: RateLimit | null;
@@ -223,6 +267,96 @@ async function fetchExplicit(token: string, names: string[], prs: number, ctx: C
     ctx.warnings.push(...errors.filter((e) => !e.includes("Could not resolve to a Repository")));
   }
   return out;
+}
+
+// --------------------------------------------------------------------------- bot reviews
+
+export interface BotReviewRaw {
+  reviews: RawBotReview[];
+  threads: RawThread[];
+  threadTotal: number;
+}
+
+export type BotFetcher = (token: string, ids: string[], bots: string[], ctx: Context) => Promise<Map<string, BotReviewRaw>>;
+
+interface RawBotNode {
+  id: string;
+  reviewThreads: { totalCount: number; nodes: (RawThread | null)[] | null } | null;
+  [alias: string]: unknown;
+}
+
+/** Does this PR's latest-review-per-author list include one of the configured bots? */
+export function hasBotReview(pr: Pick<RawPR, "latestReviews">, bots: Set<string>): boolean {
+  return (pr.latestReviews?.nodes ?? []).some((n) => {
+    const login = botLogin(n?.author);
+    return !!login && bots.has(login.toLowerCase());
+  });
+}
+
+export function capWarning(name: string, total: number): string | null {
+  return total > THREAD_CAP ? `${name}: only the newest ${THREAD_CAP} of ${total} review threads were checked.` : null;
+}
+
+/** Fetch bot reviews and review threads for a list of PR node ids, BOT_BATCH at a time. */
+export async function fetchBotReviews(token: string, ids: string[], bots: string[], ctx: Context): Promise<Map<string, BotReviewRaw>> {
+  const out = new Map<string, BotReviewRaw>();
+  const query = botReviewsQuery(bots.length);
+  for (let start = 0; start < ids.length; start += BOT_BATCH) {
+    const batch = ids.slice(start, start + BOT_BATCH);
+    const variables: Record<string, unknown> = { ids: batch };
+    bots.forEach((b, i) => { variables[`a${i}`] = b; });
+    const { data, errors } = await graphql(token, query, variables);
+    ctx.warnings.push(...errors);
+    ctx.rate = data.rateLimit ?? ctx.rate;
+    for (const node of (data.nodes as (RawBotNode | null)[] | undefined) ?? []) {
+      if (!node) continue;
+      const reviews: RawBotReview[] = [];
+      bots.forEach((_, i) => {
+        const conn = node[`b${i}`] as { nodes: (RawBotReview | null)[] | null } | null | undefined;
+        for (const r of conn?.nodes ?? []) if (r) reviews.push(r);
+      });
+      const threads = (node.reviewThreads?.nodes ?? []).filter((t): t is RawThread => !!t);
+      out.set(node.id, { reviews, threads, threadTotal: node.reviewThreads?.totalCount ?? threads.length });
+    }
+  }
+  return out;
+}
+
+/**
+ * Attach Watcher summaries to the PRs in `candidates` (lowercase owner → PR node ids), one
+ * token per owner. A failed fetch becomes a warning so the dashboard still loads.
+ */
+export async function attachBotReviews(
+  cfg: Config, tokens: Pick<Tokens, "forOwner">, repos: Repo[], candidates: Map<string, string[]>,
+  ctx: Context, fetcher: BotFetcher = fetchBotReviews,
+): Promise<void> {
+  const prById = new Map<string, { pr: PullRequest; repo: Repo }>();
+  for (const repo of repos) for (const pr of repo.prs) prById.set(pr.id, { pr, repo });
+  for (const [owner, ids] of candidates) {
+    let got: Map<string, BotReviewRaw>;
+    try {
+      got = await fetcher(await tokens.forOwner(owner), ids, cfg.bot_reviewers, ctx);
+    } catch (e) {
+      ctx.warnings.push(`Watcher reviews unavailable for ${owner}: ${(e as Error).message}`);
+      for (const id of ids) {
+        const hit = prById.get(id);
+        if (hit) hit.pr.watcherIssue = "unavailable";
+      }
+      continue;
+    }
+    for (const [id, raw] of got) {
+      const hit = prById.get(id);
+      if (!hit) continue;
+      hit.pr.watcher = shapeWatcher(raw.reviews, raw.threads, hit.pr.headOid);
+      const warn = capWarning(`${hit.repo.name}#${hit.pr.number}`, raw.threadTotal);
+      if (warn) ctx.warnings.push(warn);
+      if (raw.threadTotal > THREAD_CAP) hit.pr.watcherIssue = "capped";
+    }
+    for (const id of ids) {
+      const hit = prById.get(id);
+      if (hit && !got.has(id)) hit.pr.watcherIssue = "unavailable";
+    }
+  }
 }
 
 // --------------------------------------------------------------------------- collect
@@ -290,6 +424,9 @@ export async function collect(cfg: Config, tokens: Tokens, extra: ExtraSources =
   }
 
   const excludes = cfg.exclude.map(globToRegExp);
+  const botsOn = cfg.bot_reviews && cfg.bot_reviewers.length > 0;
+  const bots = new Set(cfg.bot_reviewers.map((b) => b.toLowerCase()));
+  const candidates = new Map<string, string[]>(); // lowercase owner → PR node ids with a bot review
   const result: Repo[] = [];
   for (const [key, node] of repos) {
     if (!explicit.has(key)) {
@@ -298,10 +435,17 @@ export async function collect(cfg: Config, tokens: Tokens, extra: ExtraSources =
       if (node.isFork && !cfg.include_forks) continue;
     }
     result.push(shapeRepo(node, ctx.viewer));
+    if (!botsOn) continue;
+    const owner = key.split("/")[0];
+    for (const raw of node.pullRequests.nodes ?? []) {
+      if (raw && hasBotReview(raw, bots)) candidates.set(owner, [...(candidates.get(owner) ?? []), raw.id]);
+    }
   }
+  if (candidates.size) await attachBotReviews(cfg, tokens, result, candidates, ctx);
+  for (const repo of result) for (const pr of repo.prs) pr.blockers = mergeBlockers(pr, botsOn);
 
   const warnings = [...new Set(ctx.warnings.filter((w) => !w.includes("Could not resolve to a RepositoryOwner")))].sort();
-  return { viewer: ctx.viewer, rateLimit: ctx.rate, warnings, repos: result };
+  return { viewer: ctx.viewer, rateLimit: ctx.rate, warnings, repos: result, botReviews: botsOn };
 }
 
 // --------------------------------------------------------------------------- shaping
@@ -354,5 +498,12 @@ function shapePr(pr: RawPR, viewer: string | null): PullRequest {
     requestedTeams: teams,
     isMine: !!me && login.toLowerCase() === me,
     reviewRequestedFromMe: !!me && users.some((u) => u.toLowerCase() === me),
+    id: pr.id,
+    headOid: pr.headRefOid ?? null,
+    mergeable: pr.mergeable ?? null,
+    mergeState: pr.mergeStateStatus ?? null,
+    watcher: null,
+    watcherIssue: null,
+    blockers: [],
   };
 }

@@ -28,6 +28,17 @@ function append(el: Element, children: Child[]): void {
 export const link = (href: string, attrs: Attrs, ...children: Child[]): HTMLAnchorElement =>
   h("a", { href, target: "_blank", rel: "noopener", ...attrs }, ...children);
 
+/**
+ * Render HTML the server already sanitized (src/sanitize.ts: GitHub's bodyHTML through a
+ * strict allowlist). Never pass anything else here; everything else goes through h().
+ */
+export function html(cls: string, markup: string): HTMLDivElement {
+  const el = document.createElement("div");
+  el.className = cls;
+  el.innerHTML = markup;
+  return el;
+}
+
 export function svg(d: string, size = 16, cls = ""): SVGSVGElement {
   const ns = "http://www.w3.org/2000/svg";
   const s = document.createElementNS(ns, "svg");

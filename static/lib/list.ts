@@ -2,6 +2,7 @@
 import type { CheckState, PullRequest, Repo, ReviewDecision } from "../../src/types.ts";
 import { ICON, ago, daysSince, h, labelStyle, link, store, svg } from "./dom.ts";
 import { hooks, state, type RepoView } from "./state.ts";
+import { mergeIndicator, watcherBadges, watcherPanel } from "./watcher.ts";
 
 const ROW_CAP = 10; // PRs shown per repo before "Show N more"
 
@@ -87,6 +88,7 @@ function renderPr(pr: PullRequest): HTMLElement {
         pr.isDraft ? h("span", { class: "badge draft" }, "Draft") : null,
         pr.reviewRequestedFromMe ? h("span", { class: "badge you" }, "Your review") : null,
         review ? h("span", { class: "badge " + review[0] }, review[1]) : null,
+        ...watcherBadges(pr),
         pr.labels.length ? h("span", { class: "labels" },
           pr.labels.map((l) => h("span", { class: "label", style: labelStyle(l.color) }, l.name))) : null,
       ),
@@ -104,12 +106,14 @@ function renderPr(pr: PullRequest): HTMLElement {
       ),
     ),
     h("div", { class: "pr-side" },
+      mergeIndicator(pr),
       pr.ci ? h("span", { class: "ci " + pr.ci, title: `Checks ${CI[pr.ci]}` }, h("span", { class: "dot" }), CI[pr.ci]) : null,
       h("span", { class: "diff" },
         h("span", { class: "add" }, "+" + (pr.additions ?? 0)), " ",
         h("span", { class: "del" }, "−" + (pr.deletions ?? 0))),
       pr.comments ? h("span", { class: "ci", title: `${pr.comments} comments` }, svg(ICON.comment, 12), pr.comments) : null,
     ),
+    watcherPanel(pr),
   );
 }
 
