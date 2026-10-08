@@ -15,5 +15,5 @@
     "noUncheckedIndexedAccess": false,
     "skipLibCheck": true
   },
-  "include": ["server.ts", "src/**/*.ts", "static/**/*.ts"]
+  "include": ["server.ts", "src/**/*.ts", "shared/**/*.ts","static/**/*.ts"]
 }

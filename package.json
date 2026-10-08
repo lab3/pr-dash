@@ -12,7 +12,7 @@
     "start": "node server.ts",
     "open": "node server.ts --open",
     "check": "tsc --noEmit",
-    "test": "node --test 'src/**/*.test.ts' 'static/**/*.test.ts'"
+    "test": "node --test 'src/**/*.test.ts' 'shared/**/*.test.ts' 'static/**/*.test.ts'"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",
