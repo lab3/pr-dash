@@ -271,6 +271,8 @@ function renderFooter(): void {
   const parts = [`Updated ${ago(d.generatedAt)} · fetched in ${(d.fetchMs / 1000).toFixed(1)}s`];
   if (d.refreshSeconds) parts.push(`auto-refresh every ${Math.max(1, Math.round(d.refreshSeconds / 60))} min`);
   if (d.rateLimit) parts.push(`API ${d.rateLimit.remaining}/${d.rateLimit.limit} left`);
+  const ageMs = Date.now() - +new Date(d.generatedAt);
+  if (d.hosted && ageMs > 10 * 60_000) parts.push("cron not running");
   els.footer.textContent = parts.join(" · ");
 }
 

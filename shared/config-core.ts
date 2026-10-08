@@ -83,3 +83,9 @@ export function normalizeConfig(cfg: Config): Config {
   out.allowed_emails = strings(cfg.allowed_emails).map((e) => e.toLowerCase());
   return out;
 }
+
+/** The config the browser or an admin may see: no token specs, no email allowlist. */
+export function publicConfig(cfg: Config): Omit<Config, "tokens" | "allowed_emails"> {
+  const { tokens: _t, allowed_emails: _e, ...rest } = cfg;
+  return rest;
+}

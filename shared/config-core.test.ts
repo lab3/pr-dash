@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEFAULTS, normalizeConfig } from "./config-core.ts";
+import { DEFAULTS, normalizeConfig, publicConfig } from "./config-core.ts";
 
 test("bot review defaults", () => {
   assert.equal(DEFAULTS.bot_reviews, true);
@@ -40,4 +40,11 @@ test("normalizeConfig lowercases and trims allowed_emails and drops blanks", () 
 test("normalizeConfig turns a blank viewer_login into null", () => {
   assert.equal(normalizeConfig({ ...DEFAULTS, viewer_login: "  " }).viewer_login, null);
   assert.equal(normalizeConfig({ ...DEFAULTS, viewer_login: " len " }).viewer_login, "len");
+});
+
+test("publicConfig strips tokens and allowed_emails", () => {
+  const pub = publicConfig({ ...DEFAULTS, tokens: { default: "gh" }, allowed_emails: ["a@b.c"] }) as Record<string, unknown>;
+  assert.equal("tokens" in pub, false);
+  assert.equal("allowed_emails" in pub, false);
+  assert.equal(pub.prs_per_repo, 50);
 });
