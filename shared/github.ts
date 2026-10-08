@@ -247,7 +247,7 @@ async function* paginate(
   let seen = 0;
   while (seen < limit) {
     if (ctx.requests >= ctx.maxRequests) {
-      ctx.warnings.push(`Stopped fetching ${label} after ${ctx.requests} GitHub requests; raise max_repos_per_source pages later or narrow the sources.`);
+      ctx.warnings.push(`Stopped fetching ${label} after ${ctx.requests} GitHub requests (budget ${ctx.maxRequests}); narrow owners or repos, or raise the budget.`);
       break;
     }
     const n = Math.min(REPO_PAGE_SIZE, limit - seen);
@@ -397,37 +397,58 @@ export interface ExtraSources {
  */
 export async function collect(
   cfg: Config, tokens: TokenSource, extra: ExtraSources = { repos: [], owners: [] },
-  opts: { maxRequests?: number } = {},
+  opts: { maxRequests?: number; includeViewer?: boolean } = {},
 ): Promise<Omit<DashboardData, "fetchMs" | "generatedAt" | "refreshSeconds">> {
   const extraRepos = extra.repos;
   const prs = cfg.prs_per_repo;
   const limit = Number(cfg.max_repos_per_source);
   const repos = new Map<string, RawRepo>();
   const explicit = new Set<string>();
-  const includeViewer = !cfg.viewer_login;
+  const includeViewer = opts.includeViewer ?? !cfg.viewer_login;
   const ctx: Context = { warnings: [], viewer: cfg.viewer_login ?? null, rate: null, requests: 0, maxRequests: opts.maxRequests ?? 40 };
   const add = (node: RawRepo) => {
     const key = node.nameWithOwner.toLowerCase();
     if (!repos.has(key)) repos.set(key, node);
   };
 
+  // One failing source (dead token, 5xx, missing installation) becomes a warning; only a run
+  // where every source failed throws, so a run that got nothing never replaces good data.
+  let attempted = 0;
+  let failed = 0;
+  let lastError = "";
+  const fail = (what: string, e: unknown) => {
+    failed++;
+    lastError = (e as Error).message;
+    ctx.warnings.push(`Could not fetch ${what}: ${lastError}`);
+  };
+
   if (cfg.mine) {
-    const it = paginate(await tokens.default(), VIEWER_QUERY, { prs }, (d) => d.viewer?.repositories, limit, ctx, "your repos");
-    for await (const node of it) add(node);
+    attempted++;
+    try {
+      const it = paginate(await tokens.default(), VIEWER_QUERY, { prs }, (d) => d.viewer?.repositories, limit, ctx, "your repos");
+      for await (const node of it) add(node);
+    } catch (e) {
+      fail("your repos", e);
+    }
   }
 
   const owners = new Map<string, string>();
   for (const o of [...cfg.owners, ...extra.owners]) if (!owners.has(o.toLowerCase())) owners.set(o.toLowerCase(), o);
   for (const owner of owners.values()) {
     const prefix = owner.toLowerCase() + "/";
-    const it = paginate(await tokens.forOwner(owner), ownerQuery(includeViewer), { prs, login: owner },
-      (d) => d.repositoryOwner?.repositories, limit, ctx, owner);
-    let step = await it.next();
-    while (!step.done) {
-      if (step.value.nameWithOwner.toLowerCase().startsWith(prefix)) add(step.value);
-      step = await it.next();
+    attempted++;
+    try {
+      const it = paginate(await tokens.forOwner(owner), ownerQuery(includeViewer), { prs, login: owner },
+        (d) => d.repositoryOwner?.repositories, limit, ctx, owner);
+      let step = await it.next();
+      while (!step.done) {
+        if (step.value.nameWithOwner.toLowerCase().startsWith(prefix)) add(step.value);
+        step = await it.next();
+      }
+      if (step.value === false) ctx.warnings.push(`User or org not found: ${owner}`);
+    } catch (e) {
+      fail(owner, e);
     }
-    if (step.value === false) ctx.warnings.push(`User or org not found: ${owner}`);
   }
 
   const byOwner = new Map<string, string[]>();
@@ -445,7 +466,15 @@ export async function collect(
     byOwner.set(owner, [...(byOwner.get(owner) ?? []), full]);
   }
   for (const [owner, group] of byOwner) {
-    for (const node of await fetchExplicit(await tokens.forOwner(owner), group, prs, ctx, includeViewer)) add(node);
+    attempted++;
+    try {
+      for (const node of await fetchExplicit(await tokens.forOwner(owner), group, prs, ctx, includeViewer)) add(node);
+    } catch (e) {
+      fail(owner, e);
+    }
+  }
+  if (attempted > 0 && failed === attempted) {
+    throw new DashError(`Every source failed: ${lastError}`, "Check the tokens in config and GitHub's status.", 502);
   }
 
   const excludes = cfg.exclude.map(globToRegExp);

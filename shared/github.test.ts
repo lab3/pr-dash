@@ -134,14 +134,15 @@ function ownerPage(repos: string[], hasNextPage: boolean): string {
   });
 }
 
-async function withFetch<T>(pages: string[], body: () => Promise<T>): Promise<{ result: T; calls: { query: string; variables: Record<string, unknown> }[] }> {
+async function withFetch<T>(pages: (string | { status: number; text: string })[], body: () => Promise<T>): Promise<{ result: T; calls: { query: string; variables: Record<string, unknown> }[] }> {
   const real = globalThis.fetch;
   const calls: { query: string; variables: Record<string, unknown> }[] = [];
   let i = 0;
   globalThis.fetch = (async (_url: unknown, init: RequestInit) => {
     calls.push(JSON.parse(String(init.body)));
-    const text = pages[Math.min(i++, pages.length - 1)];
-    return new Response(text, { status: 200, headers: { "content-type": "application/json" } });
+    const page = pages[Math.min(i++, pages.length - 1)];
+    const { status, text } = typeof page === "string" ? { status: 200, text: page } : page;
+    return new Response(text, { status, headers: { "content-type": "application/json" } });
   }) as typeof fetch;
   try {
     return { result: await body(), calls };
@@ -171,4 +172,32 @@ test("collect stops paginating at the request budget and warns", async () => {
   assert.equal(calls.length, 3);
   assert.ok(result.warnings.some((w) => w.startsWith("Stopped fetching o after 3 GitHub requests")));
   assert.equal(result.repos.length, 1); // the same repo three times, deduped
+});
+
+test("collect with includeViewer false never asks for viewer, even without viewer_login", async () => {
+  const c = { ...DEFAULTS, mine: false, owners: ["o"] };
+  const { calls } = await withFetch([ownerPage(["a"], false)], () => collect(c, tokenSource, undefined, { includeViewer: false }));
+  assert.ok(calls.length > 0);
+  assert.ok(calls.every((q) => !/\bviewer\b/.test(q.query)));
+});
+
+test("collect skips an owner whose token fails and keeps the others", async () => {
+  const c = { ...DEFAULTS, mine: false, owners: ["o", "o2"] };
+  const tokens = { default: async () => "t", forOwner: async (o: string) => { if (o === "o2") throw new Error("no installation"); return "t"; } };
+  const { result } = await withFetch([ownerPage(["a"], false)], () => collect(c, tokens));
+  assert.deepEqual(result.repos.map((r) => r.name), ["o/a"]);
+  assert.ok(result.warnings.some((w) => w.startsWith("Could not fetch o2:")));
+});
+
+test("collect throws when every source fails", async () => {
+  const c = { ...DEFAULTS, mine: false, owners: ["o", "o2"] };
+  const tokens = { default: async () => "t", forOwner: async () => { throw new Error("dead token"); } };
+  await assert.rejects(withFetch([ownerPage([], false)], () => collect(c, tokens)), /Every source failed/);
+});
+
+test("collect turns a GitHub 500 on one owner into a warning", async () => {
+  const c = { ...DEFAULTS, mine: false, owners: ["bad", "o"] };
+  const { result } = await withFetch([{ status: 500, text: "boom" }, ownerPage(["a"], false)], () => collect(c, tokenSource));
+  assert.deepEqual(result.repos.map((r) => r.name), ["o/a"]);
+  assert.ok(result.warnings.some((w) => w.startsWith("Could not fetch bad:")));
 });
