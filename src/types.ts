@@ -2,6 +2,59 @@
 
 export type ReviewDecision = "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED";
 export type CheckState = "SUCCESS" | "FAILURE" | "ERROR" | "PENDING" | "EXPECTED";
+export type MergeableState = "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+export type MergeStateStatus =
+  | "BEHIND" | "BLOCKED" | "CLEAN" | "DIRTY" | "DRAFT" | "HAS_HOOKS" | "UNKNOWN" | "UNSTABLE";
+
+/** Status of one Watcher review, or of a PR's Watcher reviews as a whole. */
+export type WatcherStatus = "open" | "partly" | "addressed" | "summary";
+
+/** One inline comment thread opened by a Watcher review. */
+export interface Finding {
+  path: string;
+  line: number | null;
+  url: string;
+  /** Sanitized HTML of the first comment (see src/sanitize.ts). */
+  html: string;
+  /** Text starts with "Nit": never counts toward Open. */
+  nit: boolean;
+  resolved: boolean;
+  /** The code under the thread changed. Still open unless resolved. */
+  outdated: boolean;
+  /** Comments in the thread after the first one. */
+  replies: number;
+}
+
+export interface WatcherReview {
+  id: string;
+  url: string;
+  submittedAt: string;
+  /** Commit the review was posted against. */
+  commit: string | null;
+  /** Sanitized HTML of the review summary. */
+  html: string;
+  status: WatcherStatus;
+  /** Open non-nit findings. */
+  open: number;
+  /** All non-nit findings. */
+  total: number;
+  /** Unresolved nits. */
+  nits: number;
+  /** Open first, then resolved; nits after non-nits within each group. */
+  findings: Finding[];
+  /** The PR has commits newer than `commit`. */
+  stale: boolean;
+}
+
+export interface WatcherSummary {
+  status: WatcherStatus;
+  open: number;
+  total: number;
+  nits: number;
+  stale: boolean;
+  latest: WatcherReview;
+  earlier: WatcherReview[];
+}
 
 export interface Label {
   name: string;
@@ -30,6 +83,15 @@ export interface PullRequest {
   requestedTeams: string[];
   isMine: boolean;
   reviewRequestedFromMe: boolean;
+  /** GraphQL node id, used for the batched Watcher fetch. */
+  id: string;
+  headOid: string | null;
+  mergeable: MergeableState | null;
+  mergeState: MergeStateStatus | null;
+  /** null when the PR has no review from a configured bot. */
+  watcher: WatcherSummary | null;
+  /** Why the PR isn't ready to merge, in display order. Empty means ready. */
+  blockers: string[];
 }
 
 export interface Repo {
@@ -60,6 +122,8 @@ export interface DashboardData {
   fetchMs: number;
   generatedAt: string;
   refreshSeconds: number;
+  /** `bot_reviews` from config, so the UI knows whether to show Watcher chrome. */
+  botReviews: boolean;
 }
 
 /**

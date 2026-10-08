@@ -17,6 +17,10 @@
   "cache_seconds": 120,
   "refresh_seconds": 300,
 
+  "_bot_reviews_comment": "Show Grok PR Watcher reviews and whether their findings are addressed.",
+  "bot_reviews": true,
+  "bot_reviewers": ["grok-pr-watcher[bot]"],
+
   "_tokens_comment": "Optional. Default is GITHUB_TOKEN/GH_TOKEN, then `gh auth token`. Specs: \"gh\", \"env:VAR\", \"keychain:SERVICE\".",
   "tokens": {}
 }
