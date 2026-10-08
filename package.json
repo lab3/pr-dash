@@ -11,11 +11,19 @@
   "scripts": {
     "start": "node server.ts",
     "open": "node server.ts --open",
-    "check": "tsc --noEmit",
-    "test": "node --test 'src/**/*.test.ts' 'shared/**/*.test.ts' 'static/**/*.test.ts'"
+    "check": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
+    "test": "node --test 'src/**/*.test.ts' 'shared/**/*.test.ts' 'static/**/*.test.ts' 'worker/**/*.test.ts' 'scripts/**/*.test.mjs'",
+    "build": "node scripts/build.mjs",
+    "dev:worker": "node scripts/render-wrangler.mjs --dev && npm run build && wrangler dev --config wrangler.deploy.json"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "5.20261008.1",
     "@types/node": "^22.18.0",
-    "typescript": "^5.8.0"
+    "esbuild": "0.28.2",
+    "typescript": "^5.8.0",
+    "wrangler": "4.149.0"
+  },
+  "dependencies": {
+    "jose": "6.2.12"
   }
 }
