@@ -5,6 +5,7 @@
 //   ACCESS_TEAM_DOMAIN=https://team.cloudflareaccess.com ACCESS_AUD=... node scripts/check-access.mjs https://pr.example.test
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { AUD_FORMAT, AUD_RE, TEAM_DOMAIN_FORMAT, TEAM_DOMAIN_RE } from "./check-config.mjs";
 
 const ATTEMPTS = 12;
 const WAIT_MS = 10_000;
@@ -35,8 +36,12 @@ async function probe(url, expect) {
 
 async function main(base) {
   const expect = { teamDomain: process.env.ACCESS_TEAM_DOMAIN, aud: process.env.ACCESS_AUD };
-  if (!expect.teamDomain || !expect.aud) {
-    console.error("::error::ACCESS_TEAM_DOMAIN and ACCESS_AUD must be set.");
+  if (!TEAM_DOMAIN_RE.test(expect.teamDomain ?? "")) {
+    console.error(`::error::ACCESS_TEAM_DOMAIN must look like ${TEAM_DOMAIN_FORMAT}.`);
+    process.exit(1);
+  }
+  if (!AUD_RE.test(expect.aud ?? "")) {
+    console.error(`::error::ACCESS_AUD must be ${AUD_FORMAT}.`);
     process.exit(1);
   }
   let failed = false;
@@ -55,5 +60,10 @@ async function main(base) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
-  main(process.argv[2] ?? `https://${process.env.PRDASH_HOSTNAME}`);
+  const base = process.argv[2] ?? (process.env.PRDASH_HOSTNAME ? `https://${process.env.PRDASH_HOSTNAME}` : null);
+  if (!base) {
+    console.error("::error::Pass the site URL as an argument or set PRDASH_HOSTNAME.");
+    process.exit(1);
+  }
+  main(base);
 }

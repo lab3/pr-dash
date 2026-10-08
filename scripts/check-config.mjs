@@ -8,6 +8,10 @@ import { fileURLToPath } from "node:url";
 
 const ACCOUNT_ID = /^[0-9a-f]{32}$/;
 export const CRON = "*/5 * * * *";
+export const TEAM_DOMAIN_RE = /^https:\/\/[a-z0-9-]+\.cloudflareaccess\.com$/;
+export const AUD_RE = /^[0-9a-f]{64}$/;
+export const TEAM_DOMAIN_FORMAT = "https://<team>.cloudflareaccess.com (no trailing slash)";
+export const AUD_FORMAT = "64 lowercase hex characters";
 
 export function validate(config, { dev = false } = {}) {
   const text = JSON.stringify(config);
@@ -19,12 +23,15 @@ export function validate(config, { dev = false } = {}) {
   if (domains.length !== 1) throw new Error(`expected exactly one custom_domain route, found ${domains.length}.`);
   if (!config.assets?.directory || config.assets.run_worker_first !== true) throw new Error("assets.run_worker_first must be true.");
   if (JSON.stringify(config.triggers?.crons) !== JSON.stringify([CRON])) throw new Error(`triggers.crons must be ["${CRON}"].`);
+  if (config.observability?.enabled !== true) throw new Error("observability.enabled must be true.");
   if (!config.kv_namespaces?.some((k) => k.binding === "PRDASH")) throw new Error("a PRDASH kv_namespaces binding is required.");
   if (!dev) {
     for (const name of ["HOSTNAME", "ACCESS_TEAM_DOMAIN", "ACCESS_AUD"]) {
       if (!config.vars?.[name]) throw new Error(`vars.${name} is required.`);
     }
     if (config.vars.HOSTNAME !== domains[0]) throw new Error("vars.HOSTNAME must equal the custom_domain route.");
+    if (!TEAM_DOMAIN_RE.test(config.vars.ACCESS_TEAM_DOMAIN)) throw new Error(`vars.ACCESS_TEAM_DOMAIN must look like ${TEAM_DOMAIN_FORMAT}.`);
+    if (!AUD_RE.test(config.vars.ACCESS_AUD)) throw new Error(`vars.ACCESS_AUD must be ${AUD_FORMAT}.`);
   }
   return { name: config.name, hostname: domains[0], teamDomain: config.vars?.ACCESS_TEAM_DOMAIN, aud: config.vars?.ACCESS_AUD };
 }

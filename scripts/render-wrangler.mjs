@@ -31,7 +31,7 @@ export function render(template, values) {
     const value = values[name];
     if (value === null) continue; // dev: leave the placeholder, remove the key below
     if (!value) throw new Error(`${name} is not set (needed for ${placeholder}).`);
-    out = out.split(placeholder).join(value);
+    out = out.split(placeholder).join(name === "ACCESS_TEAM_DOMAIN" ? value.replace(/\/$/, "") : value);
   }
   const config = JSON.parse(out);
   if (values.ACCESS_AUD === null) delete config.vars.ACCESS_AUD;

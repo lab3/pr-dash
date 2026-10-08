@@ -41,4 +41,21 @@ test("validate rejects the dangerous settings", () => {
   assert.throws(() => validate({ ...good, assets: { ...good.assets, run_worker_first: false } }), /run_worker_first/);
   assert.throws(() => validate({ ...good, triggers: { crons: ["* * * * *"] } }), /cron/);
   assert.throws(() => validate({ ...good, account_id: "nope" }), /account_id/);
+  const { observability: _drop, ...noObs } = good;
+  assert.throws(() => validate(noObs), /observability\.enabled must be true/);
+  assert.throws(() => validate({ ...good, observability: { enabled: false } }), /observability/);
+});
+
+test("validate checks the Access team domain and AUD formats", () => {
+  const good = render(template, values);
+  const withVars = (vars) => ({ ...good, vars: { ...good.vars, ...vars } });
+  assert.throws(() => validate(withVars({ ACCESS_TEAM_DOMAIN: "http://t.cloudflareaccess.com" })), /ACCESS_TEAM_DOMAIN/);
+  assert.throws(() => validate(withVars({ ACCESS_TEAM_DOMAIN: "https://t.cloudflareaccess.com/" })), /ACCESS_TEAM_DOMAIN/);
+  assert.throws(() => validate(withVars({ ACCESS_AUD: "abc1234567" })), /ACCESS_AUD/);
+});
+
+test("render strips one trailing slash from the team domain", () => {
+  const out = render(template, { ...values, ACCESS_TEAM_DOMAIN: "https://t.cloudflareaccess.com/" });
+  assert.equal(out.vars.ACCESS_TEAM_DOMAIN, "https://t.cloudflareaccess.com");
+  assert.doesNotThrow(() => validate(out));
 });
