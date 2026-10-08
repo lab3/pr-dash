@@ -29,7 +29,7 @@ Run pr-dash as a private site at `pr-dash.workarea.io` on Cloudflare's **Workers
 | KV | 100,000 reads/day, **1,000 writes/day**, 1 write/sec per key, values up to 25 MiB | [KV limits](https://developers.cloudflare.com/kv/platform/limits/) |
 | Cache API | **Not available for Workers fronted by Cloudflare Access** | [Cache API](https://developers.cloudflare.com/workers/runtime-apis/cache/) |
 
-**What follows:** KV holds the data (no Cache API behind Access). A 5-minute cron is 288 runs and 288 KV writes a day; with Refresh clicks and config edits that stays under 1,000. **2 minutes (720 writes) is the floor; 1 minute (1,440) breaks the limit.** CPU is not a concern at the measured data size (next section).
+**What follows:** KV holds the data (no Cache API behind Access). A 5-minute cron is 288 runs and 288 KV writes a day; with Refresh clicks and config edits that stays under 1,000. **A 2-minute cron (720 writes/day) is the fastest cadence that still fits; 1 minute (1,440) blows the free write cap.** CPU is not a concern at the measured data size (next section).
 
 ## Measured, Oct 8
 | | |
