@@ -16,7 +16,7 @@ Show each Grok PR Watcher review right on the dashboard, with a status indicator
    - `reviews(author:"grok-pr-watcher[bot]")`: id, state, submittedAt, url, commit oid, body text.
    - `reviewThreads`: isResolved, isOutdated, path, line, the first comment's author, url and text, its review id, and the reply count.
    This two-step fetch costs about 1 rate-limit point per batch. Putting threads into the main query would have cost about 84 points for 10 repos.
-3. The status logic goes in a new pure module, `src/botreviews.ts`, so it can be tested. It uses the existing 120-second cache.
+3. The status logic goes in a new pure module, `src/botreviews.ts`, so it can be tested. It uses the existing 120-second cache. Hosted on Cloudflare, the 120-second cache is the KV value the Worker cron rewrites every 5 minutes (see `cloudflare-hosting.md`).
 4. Config adds `bot_reviewers: ["grok-pr-watcher[bot]"]` and `bot_reviews: true`.
 
 ## Status rules

@@ -28,10 +28,10 @@ node server.ts --open   # or: npm run open
 
 Then open http://localhost:8787. Stop it with Ctrl+C.
 
-You don't need `npm install` to run it. It's only for type checking and tests:
+You don't need `npm ci` to run it locally. It installs the pinned dev dependencies (TypeScript, wrangler, esbuild) for type checking, tests and the Worker build:
 
 ```bash
-npm install && npm run check    # tsc --noEmit, strict
+npm ci && npm run check    # tsc --noEmit, strict
 npm test                        # node --test, server modules and browser state
 ```
 
@@ -115,6 +115,10 @@ static/lib/editor.ts  view editor dialog
 static/lib/dom.ts     DOM/format helpers
 static/lib/watcher.ts Watcher badges, mergeable indicator, review panel
 static/index.html, static/style.css
+worker/               Cloudflare Worker: fetch and cron handlers, Access gate, GitHub App tokens
+scripts/              build, wrangler config rendering and checks, KV seeding, Access redirect probe
+wrangler.json         Worker config with placeholders (rendered at deploy time)
+.github/workflows/deploy.yml   checks on every push, main-only deploy, hourly Access probe
 ```
 
 The browser loads `/app.ts`, which imports the `static/lib/*.ts` modules. The server removes the types from each `.ts` file with Node's built-in `stripTypeScriptTypes` and sends it as JavaScript, so there's no build step. Two rules keep this working, and `tsconfig.json` enforces them with `erasableSyntaxOnly`:
@@ -129,6 +133,9 @@ The browser loads `/app.ts`, which imports the `static/lib/*.ts` modules. The se
 | `GET /api/prs[?refresh=1]` | dashboard data (cached for `cache_seconds`; `refresh=1` skips the cache) |
 | `GET /api/views` | saved views |
 | `PUT /api/views` | replace all views; body `{"views": [...]}` |
+| `GET /api/health` | liveness check |
+| `GET /api/config` | the non-secret parts of the config |
+| `PUT /api/config` | replace the config (hosted only, behind Access) |
 
 API requests are only accepted if the Host header is a local name like `localhost` or `127.0.0.1`. This stops a malicious website from using a DNS trick (DNS rebinding) to read your private repo data. Requests that change anything also need a JSON body and an `X-PR-Dash: 1` header, and any `Origin` header has to match the page. Another site can't send those through your browser, so it can't make changes without your knowing. Write actions you add later should use the same checks (`assertWritable` in `server.ts`).
 
@@ -157,6 +164,25 @@ cp config.example.json config.json
 `config.json` is read again on every fetch, so edits apply on the next refresh (`host` and `port` need a restart). A different config path can be set with `PR_DASH_CONFIG=/path/to/config.json`.
 
 With no config file, it shows every repo you own, collaborate on, or can see through an org you belong to, up to 200 of the most recently pushed.
+
+## Hosted on Cloudflare
+
+pr-dash can also run as a private site on Cloudflare Workers (free plan), behind Cloudflare Access, so it's reachable from any device without a laptop running `node server.ts`. A Worker cron rebuilds the dashboard data every 5 minutes and stores it in KV; the page loads from that. Design: `docs/specs/cloudflare-hosting.md`.
+
+What's in the repo is generic. The hostname, Cloudflare account, KV namespace, Access team and AUD come from the GitHub `production` environment at deploy time, and the org list, allowed emails and GitHub App installation ids live only in KV.
+
+One-time setup (your machine):
+1. Create a read-only GitHub App (Metadata, Pull requests, Checks, Commit statuses: read) and install it on each org. Note the App id and each installation id.
+2. `npx wrangler kv namespace create PRDASH`; note the id.
+3. `npx wrangler secret put GH_APP_ID` and `npx wrangler secret put GH_APP_PRIVATE_KEY` (PKCS#8) against the rendered config: `node scripts/render-wrangler.mjs` first with the five variables exported, then `--config wrangler.deploy.json`.
+4. Create the Access application for the hostname and note its AUD.
+5. Create a Cloudflare API token scoped to Workers Scripts: Edit and Workers Routes: Edit for the zone. Put it in the GitHub `production` environment as `CLOUDFLARE_API_TOKEN`, with variables `CF_ACCOUNT_ID`, `PRDASH_HOSTNAME`, `PRDASH_KV_ID`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`.
+6. Write `config.hosted.json` (gitignored): `owners`, `allowed_emails`, `viewer_login`, `tokens` as `{"my-org": "app:<installation id>"}`, and run `node scripts/seed-kv.mjs config.hosted.json views.json`.
+7. Push to `main`. The deploy job renders the config, deploys, and checks that a signed-out request redirects to your Access login. Then sign in and confirm the page.
+
+Local development of the Worker: `npm run dev:worker` with a `.dev.vars` containing `DEV_ACCESS_EMAIL=you@example.com` and `GH_TOKEN=$(gh auth token)`, and a local KV `config` whose `tokens` is `{"default": "secret:GH_TOKEN"}`.
+
+Hosted differences: `mine` is ignored (list orgs in `owners`); `viewer_login` fills "yours" and "needs your review"; the footer says "cron not running" if the data is older than 10 minutes; `PUT /api/config` is available behind Access and refuses a config that would drop your own email.
 
 ## Auth
 
