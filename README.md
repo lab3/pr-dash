@@ -89,7 +89,7 @@ A finding is a review thread the bot opened. It counts as open until the thread 
 
 Click **Watcher review** under a row to see the summary (GitHub's rendered markdown, passed through a strict allowlist on the server), the findings with `path:line` links, and earlier reviews.
 
-**Ready to merge** turns green when there are no open findings, GitHub reports the PR as mergeable, CI is passing or absent, it isn't a draft, nobody is requesting changes, and branch protection isn't holding it. Otherwise it's gray and lists what's blocking, for example `2 open findings · CI pending · conflicts`.
+**Ready to merge** turns green when there are no open findings, GitHub has finished its merge check and reports the PR as mergeable, the branch is up to date with its base, CI is passing or absent, it isn't a draft, nobody is requesting changes, and branch protection isn't holding it. Otherwise it's gray and lists what's blocking, for example `2 open findings · CI pending · conflicts`. Right after a push, GitHub has not computed mergeability yet, so the indicator shows `merge check pending` until it has.
 
 Filter with the **Only open Watcher findings** toggle, or type `watcher:open`, `watcher:addressed`, `watcher:partly`, `watcher:summary` or `watcher:none` in the filter box.
 
@@ -98,20 +98,20 @@ Watcher data is fetched in a second, batched GraphQL query only for PRs whose la
 ## Project layout
 
 ```
-server.ts            HTTP server, response cache, API routes + request safety, static files
-src/config.ts        config.json loading, token resolution (gh / env / macOS Keychain)
-src/github.ts        GraphQL queries, pagination, shaping into the dashboard model, batched Watcher fetch
-src/botreviews.ts    Watcher status rules and merge blockers (pure, tested)
-src/sanitize.ts      allowlist filter for GitHub's rendered bodyHTML (pure, tested)
-src/*.test.ts        node --test suites
-src/views.ts         views.json load/validate/save
-src/types.ts         types shared by server and browser
-static/app.ts        browser entry: data loading, tabs, wiring
-static/lib/state.ts  UI state, view matching, filtering
-static/lib/list.ts   list layout
-static/lib/grid.ts   grid layout
-static/lib/editor.ts view editor dialog
-static/lib/dom.ts    DOM/format helpers
+server.ts             HTTP server, response cache, API routes + request safety, static files
+src/config.ts         config.json loading, token resolution (gh / env / macOS Keychain)
+src/github.ts         GraphQL queries, pagination, shaping into the dashboard model, batched Watcher fetch
+src/botreviews.ts     Watcher status rules and merge blockers (pure, tested)
+src/sanitize.ts       allowlist filter for GitHub's rendered bodyHTML (pure, tested)
+src/*.test.ts         node --test suites
+src/views.ts          views.json load/validate/save
+src/types.ts          types shared by server and browser
+static/app.ts         browser entry: data loading, tabs, wiring
+static/lib/state.ts   UI state, view matching, filtering
+static/lib/list.ts    list layout
+static/lib/grid.ts    grid layout
+static/lib/editor.ts  view editor dialog
+static/lib/dom.ts     DOM/format helpers
 static/lib/watcher.ts Watcher badges, mergeable indicator, review panel
 static/index.html, static/style.css
 ```
