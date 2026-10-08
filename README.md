@@ -32,7 +32,7 @@ You don't need `npm install` to run it. It's only for type checking and tests:
 
 ```bash
 npm install && npm run check    # tsc --noEmit, strict
-npm test                        # node --test, pure server modules
+npm test                        # node --test, server modules and browser state
 ```
 
 ## Views
@@ -103,7 +103,7 @@ src/config.ts         config.json loading, token resolution (gh / env / macOS Ke
 src/github.ts         GraphQL queries, pagination, shaping into the dashboard model, batched Watcher fetch
 src/botreviews.ts     Watcher status rules and merge blockers (pure, tested)
 src/sanitize.ts       allowlist filter for GitHub's rendered bodyHTML (pure, tested)
-src/*.test.ts         node --test suites
+src/*.test.ts, static/lib/*.test.ts   node --test suites
 src/views.ts          views.json load/validate/save
 src/types.ts          types shared by server and browser
 static/app.ts         browser entry: data loading, tabs, wiring
