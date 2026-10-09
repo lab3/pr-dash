@@ -73,9 +73,25 @@ const strings = (v: unknown): string[] =>
   Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : [];
 
 /** Coerce user-supplied values into the shapes the rest of the app assumes. */
+/** Inclusive bounds for the numeric fields; `normalizeConfig` clamps to them and the hosted PUT rejects outside them. */
+export const NUMBER_BOUNDS: Record<"max_repos_per_source" | "prs_per_repo" | "cache_seconds" | "refresh_seconds" | "port", [number, number]> = {
+  max_repos_per_source: [1, 1000],
+  prs_per_repo: [1, 100],
+  cache_seconds: [0, 3600],
+  refresh_seconds: [60, 3600],
+  port: [1, 65535],
+};
+
+function clamp(key: keyof typeof NUMBER_BOUNDS, value: unknown): number {
+  const [lo, hi] = NUMBER_BOUNDS[key];
+  const n = Math.trunc(Number(value));
+  if (!Number.isFinite(n)) return DEFAULTS[key];
+  return Math.max(lo, Math.min(hi, n));
+}
+
 export function normalizeConfig(cfg: Config): Config {
   const out = { ...cfg };
-  out.prs_per_repo = Math.max(1, Math.min(100, Math.trunc(Number(cfg.prs_per_repo)) || 50));
+  for (const key of Object.keys(NUMBER_BOUNDS) as (keyof typeof NUMBER_BOUNDS)[]) out[key] = clamp(key, cfg[key]);
   out.bot_reviews = cfg.bot_reviews !== false;
   out.bot_reviewers = Array.isArray(cfg.bot_reviewers) ? strings(cfg.bot_reviewers) : DEFAULTS.bot_reviewers;
   const login = typeof cfg.viewer_login === "string" ? cfg.viewer_login.trim() : "";

@@ -174,6 +174,13 @@ test("collect stops paginating at the request budget and warns", async () => {
   assert.equal(result.repos.length, 1); // the same repo three times, deduped
 });
 
+test("the budget also stops explicit-repo batches, not only owner pages", async () => {
+  const c = { ...DEFAULTS, mine: false, repos: ["o/a", "o/b"] };
+  const { result, calls } = await withFetch([], () => collect(c, tokenSource, undefined, { maxRequests: 0 }));
+  assert.equal(calls.length, 0);
+  assert.ok(result.warnings.some((w) => w.startsWith("Stopped fetching explicit repos after 0 GitHub requests")));
+});
+
 test("collect with includeViewer false never asks for viewer, even without viewer_login", async () => {
   const c = { ...DEFAULTS, mine: false, owners: ["o"] };
   const { calls } = await withFetch([ownerPage(["a"], false)], () => collect(c, tokenSource, undefined, { includeViewer: false }));

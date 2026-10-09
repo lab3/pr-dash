@@ -20,7 +20,8 @@ if (!cfg.allowed_emails.length) throw new Error("config.hosted.json needs at lea
 if (!cfg.owners.length && !cfg.repos.length) throw new Error("config.hosted.json needs owners or repos (mine is ignored hosted).");
 cfg.mine = false; // hosted mode ignores `mine`; keep it off in storage
 for (const [owner, spec] of Object.entries(cfg.tokens)) {
-  if (!/^(app:\d+|secret:[A-Z0-9_]+)$/.test(spec)) throw new Error(`tokens.${owner} must be app:<id> or secret:NAME, got ${spec}.`);
+  // Same shape the Worker's PUT /api/config accepts.
+  if (!/^(app:\d+|secret:[A-Za-z0-9_]+)$/.test(spec)) throw new Error(`tokens.${owner} must be app:<id> or secret:NAME, got ${spec}.`);
 }
 
 const dir = await mkdtemp(path.join(tmpdir(), "prdash-seed-"));

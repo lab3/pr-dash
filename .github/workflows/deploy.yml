@@ -40,12 +40,8 @@ jobs:
     concurrency:
       group: deploy-production
       cancel-in-progress: false
-    env:
-      CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-      PRDASH_HOSTNAME: ${{ secrets.PRDASH_HOSTNAME }}
-      PRDASH_KV_ID: ${{ secrets.PRDASH_KV_ID }}
-      ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
-      ACCESS_AUD: ${{ secrets.ACCESS_AUD }}
+    # The environment secrets are scoped to the steps that need them, so `npm ci` (which runs
+    # dependency install scripts) and the build never see them.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,7 +52,14 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - run: node scripts/render-wrangler.mjs
+      - name: Render the Worker config
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          PRDASH_HOSTNAME: ${{ secrets.PRDASH_HOSTNAME }}
+          PRDASH_KV_ID: ${{ secrets.PRDASH_KV_ID }}
+          ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
+          ACCESS_AUD: ${{ secrets.ACCESS_AUD }}
+        run: node scripts/render-wrangler.mjs
       - run: node scripts/check-config.mjs wrangler.deploy.json
       - name: Deploy
         id: deploy
@@ -66,6 +69,10 @@ jobs:
       # Runs whenever the deploy step ran, even if it failed after the version went live.
       - name: Check that the Access sign-in guards the site
         if: ${{ !cancelled() && steps.deploy.outcome != 'skipped' }}
+        env:
+          PRDASH_HOSTNAME: ${{ secrets.PRDASH_HOSTNAME }}
+          ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
+          ACCESS_AUD: ${{ secrets.ACCESS_AUD }}
         run: node scripts/check-access.mjs "https://$PRDASH_HOSTNAME"
 
   probe:

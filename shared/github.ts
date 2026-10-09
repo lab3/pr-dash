@@ -229,6 +229,13 @@ export interface Context {
   maxRequests: number;
 }
 
+/** True (and a warning pushed) when the next request would exceed the budget. */
+function overBudget(ctx: Context, label: string): boolean {
+  if (ctx.requests < ctx.maxRequests) return false;
+  ctx.warnings.push(`Stopped fetching ${label} after ${ctx.requests} GitHub requests (budget ${ctx.maxRequests}); narrow owners or repos, or raise the budget.`);
+  return true;
+}
+
 async function call(token: string, query: string, variables: Record<string, unknown>, ctx: Context) {
   ctx.requests++;
   const out = await graphql(token, query, variables);
@@ -246,10 +253,7 @@ async function* paginate(
   let cursor: string | null = null;
   let seen = 0;
   while (seen < limit) {
-    if (ctx.requests >= ctx.maxRequests) {
-      ctx.warnings.push(`Stopped fetching ${label} after ${ctx.requests} GitHub requests (budget ${ctx.maxRequests}); narrow owners or repos, or raise the budget.`);
-      break;
-    }
+    if (overBudget(ctx, label)) break;
     const n = Math.min(REPO_PAGE_SIZE, limit - seen);
     const data = await call(token, query, { ...variables, cursor, n }, ctx);
     const conn = pick(data);
@@ -269,6 +273,7 @@ async function* paginate(
 async function fetchExplicit(token: string, names: string[], prs: number, ctx: Context, includeViewer: boolean): Promise<RawRepo[]> {
   const out: RawRepo[] = [];
   for (let start = 0; start < names.length; start += EXPLICIT_BATCH) {
+    if (overBudget(ctx, "explicit repos")) break;
     const batch = names.slice(start, start + EXPLICIT_BATCH);
     const variables: Record<string, unknown> = { prs };
     batch.forEach((full, i) => {
@@ -323,6 +328,7 @@ export async function fetchBotReviews(token: string, ids: string[], bots: string
   const out = new Map<string, BotReviewRaw>();
   const query = botReviewsQuery(bots.length);
   for (let start = 0; start < ids.length; start += BOT_BATCH) {
+    if (overBudget(ctx, "Watcher reviews")) break;
     const batch = ids.slice(start, start + BOT_BATCH);
     const variables: Record<string, unknown> = { ids: batch };
     bots.forEach((b, i) => { variables[`a${i}`] = b; });

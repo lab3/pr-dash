@@ -76,6 +76,18 @@ test("missing ACCESS_TEAM_DOMAIN, ACCESS_AUD or HOSTNAME is 500 not configured",
   }
 });
 
+test("alg:none and HS256 tokens are 403 even with the right claims", async () => {
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+  const claims = { email: "you@example.org", iss: TEAM, aud: AUD, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 600 };
+  const none = `${b64({ alg: "none", kid: "k1" })}.${b64(claims)}.`;
+  const hs = await new SignJWT(claims).setProtectedHeader({ alg: "HS256", kid: "k1" }).sign(new TextEncoder().encode("a".repeat(64)));
+  for (const jwt of [none, hs]) {
+    const r = await verifyAccess(req(jwt), env(), allowed, deps);
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.response.status, 403);
+  }
+});
+
 test("a token with no exp claim is 403", async () => {
   const noExp = await new SignJWT({ email: "you@example.org" })
     .setProtectedHeader({ alg: "RS256", kid: "k1" }).setIssuer(TEAM).setAudience(AUD).setIssuedAt().sign(pair.privateKey);

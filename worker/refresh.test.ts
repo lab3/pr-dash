@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { DEFAULTS } from "../shared/config-core.ts";
 import type { collect } from "../shared/github.ts";
 import type { Env } from "./env.ts";
-import { readConfig, readData, readViews, runRefresh } from "./refresh.ts";
+import { hostedRequestBudget, readConfig, readData, readViews, runRefresh } from "./refresh.ts";
 
 export class MemoryKV {
   store = new Map<string, string>();
@@ -82,6 +82,38 @@ test("runRefresh gives no mine warning when the stored config has no mine", asyn
   assert.ok(!data.warnings.some((w) => w.includes("mine")));
   kv.store.set("config", JSON.stringify({ owners: ["o"], viewer_login: "len" }));
   assert.ok(!(await runRefresh(env(kv), deps(okCollect))).warnings.some((w) => w.includes("mine")));
+});
+
+test("runRefresh passes a budget that leaves room for KV, JWKS and one mint per distinct token spec", async () => {
+  const kv = new MemoryKV();
+  kv.store.set("config", JSON.stringify({ owners: ["o"], viewer_login: "len", tokens: { default: "app:1", a: "app:1", b: "app:2", c: "app:3" } }));
+  let opts: { maxRequests?: number } | undefined;
+  const spy: typeof collect = async (cfg, t, e, o) => { opts = o; return okCollect(cfg, t, e); };
+  await runRefresh(env(kv), deps(spy));
+  assert.equal(opts?.maxRequests, 42 - 3, "three distinct specs");
+  assert.equal(hostedRequestBudget({ ...DEFAULTS, tokens: {} }), 42);
+});
+
+test("runRefresh keeps the previous data when a run finds no repos but warned", async () => {
+  const kv = new MemoryKV();
+  kv.store.set("config", JSON.stringify({ owners: ["gone"], viewer_login: "len" }));
+  const old = { repos: [{ full: "o/r" }], warnings: [], generatedAt: new Date(0).toISOString(), hosted: true };
+  kv.store.set("prs", JSON.stringify(old));
+  const data = await runRefresh(env(kv), deps(okCollect)); // okCollect: no repos, one warning
+  assert.equal(kv.writes, 0, "nothing overwritten");
+  assert.deepEqual(data.repos, old.repos);
+  assert.ok(data.warnings.includes("w1"));
+  assert.ok(data.warnings.some((w) => w.includes("previous data")));
+  // With no old data, an empty run is still stored so the page gets something.
+  const empty = new MemoryKV();
+  empty.store.set("config", JSON.stringify({ owners: ["gone"], viewer_login: "len" }));
+  await runRefresh(env(empty), deps(okCollect));
+  assert.equal(empty.writes, 1);
+  // A clean run with no repos and no warnings (everything merged) is stored.
+  const quiet: typeof collect = async (cfg) => ({ viewer: cfg.viewer_login, rateLimit: null, warnings: [], repos: [], botReviews: true });
+  kv.writes = 0;
+  await runRefresh(env(kv), deps(quiet));
+  assert.equal(kv.writes, 1);
 });
 
 test("runRefresh leaves the old value when collect throws", async () => {

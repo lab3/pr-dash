@@ -1,6 +1,6 @@
 // pr-dash on Cloudflare Workers: Access gate, API routes backed by KV, static assets, and the
 // cron that rebuilds the dashboard data. See docs/specs/cloudflare-hosting.md.
-import { DEFAULTS, DashError, normalizeConfig, publicConfig, type Config } from "../shared/config-core.ts";
+import { DEFAULTS, DashError, NUMBER_BOUNDS, normalizeConfig, publicConfig, type Config } from "../shared/config-core.ts";
 import { exactViewRepos, validateViews, viewOwners } from "../shared/views-core.ts";
 import type { DashboardData } from "../src/types.ts";
 import { verifyAccess, type AccessDeps } from "./access.ts";
@@ -56,17 +56,28 @@ async function readJson(request: Request, limit = 256 * 1024): Promise<unknown> 
 }
 
 const ARRAY_KEYS = ["owners", "repos", "exclude", "bot_reviewers", "allowed_emails"];
-const NUMBER_KEYS = ["max_repos_per_source", "prs_per_repo", "cache_seconds", "refresh_seconds"];
+/** `port` and `host` are local-server settings; hosted mode neither shows nor accepts them. */
+const NUMBER_KEYS = ["max_repos_per_source", "prs_per_repo", "cache_seconds", "refresh_seconds"] as const;
 const BOOLEAN_KEYS = ["mine", "include_archived", "include_forks", "bot_reviews"];
 const TOKEN_SPEC = /^(app:\d+|secret:[A-Za-z0-9_]+)$/;
 
-/** Rejects unknown keys and wrong types, so a bad PUT can't store a config that breaks every refresh. */
+/** The config an admin sees in hosted mode: no secrets, and none of the local-server fields. */
+function hostedPublicConfig(cfg: Config): Omit<ReturnType<typeof publicConfig>, "host" | "port"> {
+  const { host: _h, port: _p, ...rest } = publicConfig(cfg);
+  return rest;
+}
+
+/** Rejects unknown keys, wrong types and out-of-range numbers, so a bad PUT can't store a config that breaks every refresh. */
 function validateConfigBody(body: Record<string, unknown>): void {
   for (const [key, value] of Object.entries(body)) {
     let ok: boolean;
     if (ARRAY_KEYS.includes(key)) ok = Array.isArray(value) && value.every((v) => typeof v === "string");
-    else if (NUMBER_KEYS.includes(key)) ok = typeof value === "number" && Number.isFinite(value);
-    else if (BOOLEAN_KEYS.includes(key)) ok = typeof value === "boolean";
+    else if ((NUMBER_KEYS as readonly string[]).includes(key)) {
+      const [lo, hi] = NUMBER_BOUNDS[key as (typeof NUMBER_KEYS)[number]];
+      if (typeof value !== "number" || !Number.isInteger(value)) throw new DashError(`Config field ${key} must be an integer.`, null, 400);
+      if (value < lo || value > hi) throw new DashError(`Config field ${key} must be between ${lo} and ${hi}.`, null, 400);
+      ok = true;
+    } else if (BOOLEAN_KEYS.includes(key)) ok = typeof value === "boolean";
     else if (key === "viewer_login") ok = value === null || typeof value === "string";
     else if (key === "tokens") {
       ok = !!value && typeof value === "object" && !Array.isArray(value)
@@ -111,11 +122,12 @@ async function api(request: Request, url: URL, env: Env, ctx: { waitUntil(p: Pro
     await kv.put("views", JSON.stringify({ views }));
     const had = new Set([...viewOwners(before), ...exactViewRepos(before)].map((s) => s.toLowerCase()));
     const added = [...viewOwners(views), ...exactViewRepos(views)].some((s) => !had.has(s.toLowerCase()));
-    if (added) ctx.waitUntil(run().catch(logBackground));
+    // Wait for the refresh: the browser reloads /api/prs right after this PUT and should see the new owner.
+    if (added) await run().catch(logBackground);
     return json(200, { views });
   }
 
-  if (url.pathname === "/api/config" && request.method === "GET") return json(200, publicConfig(await readConfig(kv)));
+  if (url.pathname === "/api/config" && request.method === "GET") return json(200, hostedPublicConfig(await readConfig(kv)));
   if (url.pathname === "/api/config" && request.method === "PUT") {
     assertWritable(request);
     const body = await readJson(request);
@@ -129,7 +141,7 @@ async function api(request: Request, url: URL, env: Env, ctx: { waitUntil(p: Pro
     }
     await kv.put("config", JSON.stringify(cfg));
     ctx.waitUntil(run().catch(logBackground));
-    return json(200, publicConfig(cfg));
+    return json(200, hostedPublicConfig(cfg));
   }
 
   throw new DashError("Not found", null, 404);

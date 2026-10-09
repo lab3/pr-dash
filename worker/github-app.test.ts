@@ -3,21 +3,46 @@ import { test } from "node:test";
 import { decodeJwt, exportPKCS8, exportSPKI, generateKeyPair, importSPKI, jwtVerify } from "jose";
 import { DEFAULTS } from "../shared/config-core.ts";
 import type { Env } from "./env.ts";
-import { appTokens, mintAppJwt, resetTokenCache } from "./github-app.ts";
+import { appTokens, cacheUntil, mintAppJwt, resetTokenCache } from "./github-app.ts";
 
 const pair = await generateKeyPair("RS256", { extractable: true });
 const pkcs8 = await exportPKCS8(pair.privateKey);
 const spki = await exportSPKI(pair.publicKey);
 
-test("mintAppJwt signs RS256 with iss, iat 60s back, exp 540s ahead", async () => {
+test("mintAppJwt signs RS256 with iss, iat 60s back, exp 9 min ahead (under GitHub's 10-min cap)", async () => {
   const jwt = await mintAppJwt("12345", pkcs8, 1_700_000_000);
   const { payload, protectedHeader } = await jwtVerify(jwt, await importSPKI(spki, "RS256"), { currentDate: new Date(1_700_000_000 * 1000) });
   assert.equal(protectedHeader.alg, "RS256");
   assert.equal(payload.iss, "12345");
   assert.equal(payload.iat, 1_700_000_000 - 60);
   assert.equal(payload.exp, 1_700_000_000 + 540);
-  assert.ok(payload.exp! - 1_700_000_000 <= 540, "exp stays clear of GitHub's 10-minute limit");
+  assert.ok(payload.exp! - 1_700_000_000 < 600);
 });
+
+test("cacheUntil honours expires_at minus a margin, capped at 50 min, and ignores garbage", () => {
+  const now = 1_700_000_000_000;
+  assert.equal(cacheUntil(now, undefined), now + 50 * 60_000);
+  assert.equal(cacheUntil(now, "not a date"), now + 50 * 60_000);
+  assert.equal(cacheUntil(now, new Date(now + 60 * 60_000).toISOString()), now + 50 * 60_000, "one-hour token: cap wins");
+  assert.equal(cacheUntil(now, new Date(now + 20 * 60_000).toISOString()), now + 15 * 60_000, "short token: expires_at minus 5 min");
+});
+
+test("a token GitHub says expires soon is not served from cache", async () => {
+  resetTokenCache();
+  let calls = 0;
+  const now = 1_700_000_000_000;
+  const deps = {
+    now: () => now,
+    fetch: (async () => { calls++; return new Response(JSON.stringify({ token: `ghs_${calls}`, expires_at: new Date(now + 2 * 60_000).toISOString() }), { status: 201 }); }) as typeof fetch,
+  };
+  const t = appTokens({ ...DEFAULTS, tokens: { default: "app:9" } }, fakeEnv(), deps);
+  assert.equal(await t.default(), "ghs_1");
+  assert.equal(await t.default(), "ghs_2", "re-minted because expires_at - margin is already past");
+});
+
+function fakeEnv(over: Partial<Env> = {}): Env {
+  return { PRDASH: {} as KVNamespace, ASSETS: { fetch: async () => new Response() }, GH_APP_ID: "12345", GH_APP_PRIVATE_KEY: pkcs8, MY_TOKEN: "ghp_secret", ...over } as Env;
+}
 
 test("installation token is cached until expires_at minus 5 minutes", async () => {
   resetTokenCache();
@@ -37,10 +62,6 @@ test("installation token is cached until expires_at minus 5 minutes", async () =
   now += 2 * 60_000;
   assert.equal(await t.forOwner("o"), "ghs_2", "past expires_at - 5 min, re-minted");
 });
-
-function fakeEnv(over: Partial<Env> = {}): Env {
-  return { PRDASH: {} as KVNamespace, ASSETS: { fetch: async () => new Response() }, GH_APP_ID: "12345", GH_APP_PRIVATE_KEY: pkcs8, MY_TOKEN: "ghp_secret", ...over } as Env;
-}
 
 test("secret:NAME resolves from env", async () => {
   const cfg = { ...DEFAULTS, tokens: { default: "secret:MY_TOKEN" } };

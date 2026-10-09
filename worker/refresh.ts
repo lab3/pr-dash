@@ -39,14 +39,32 @@ export async function readData(kv: KVNamespace): Promise<DashboardData | null> {
   return (await kv.get("prs", "json")) as DashboardData | null;
 }
 
+/**
+ * Workers Free allows 50 subrequests per invocation. Besides GraphQL pages, one run spends
+ * subrequests on KV reads (config, views, old data), the KV write, the Access JWKS fetch on a
+ * `?refresh=1` request, and one token mint per distinct `app:` spec. Leave room for all of them.
+ */
+export function hostedRequestBudget(cfg: Config): number {
+  const distinctSpecs = new Set(Object.values(cfg.tokens ?? {})).size;
+  return Math.max(10, 42 - distinctSpecs);
+}
+
 export async function runRefresh(env: Env, deps: RefreshDeps = defaultDeps): Promise<DashboardData> {
   const started = deps.now();
   const [stored, views] = await Promise.all([readStoredConfig(env.PRDASH), readViews(env.PRDASH)]);
   const cfg = hostedConfig(stored);
   // An App token can't answer `viewer`; the config's viewer_login stands in for it.
-  const result = await deps.collect(cfg, deps.tokens(cfg, env), { repos: exactViewRepos(views), owners: viewOwners(views) }, { includeViewer: false });
+  const result = await deps.collect(cfg, deps.tokens(cfg, env), { repos: exactViewRepos(views), owners: viewOwners(views) },
+    { includeViewer: false, maxRequests: hostedRequestBudget(cfg) });
   const warnings = [...result.warnings];
   if (stored?.mine === true) warnings.push("`mine` is ignored in hosted mode; list the orgs in `owners`.");
+  // No repos plus warnings means every source went missing or was cut short. Keep what we had.
+  if (result.repos.length === 0 && result.warnings.length > 0) {
+    const old = await readData(env.PRDASH);
+    if (old && old.repos.length > 0) {
+      return { ...old, warnings: [...warnings, "This run found no repos; showing the previous data."] };
+    }
+  }
   const data: DashboardData = {
     ...result,
     warnings,
