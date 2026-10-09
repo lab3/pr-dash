@@ -1,7 +1,7 @@
 // Grid layout: one card per repo with a compact PR list.
 import type { PullRequest, Repo } from "../../src/types.ts";
 import { ICON, ago, daysSince, h, link, svg } from "./dom.ts";
-import { CI, REVIEW, avatarUrl, expandButton, moreOnGitHub } from "./list.ts";
+import { CI, REVIEW, avatarUrl, expandButton, hideButton, moreOnGitHub } from "./list.ts";
 import { state, type RepoView } from "./state.ts";
 import { watcherDot } from "./watcher.ts";
 
@@ -36,6 +36,7 @@ function card(repo: Repo, prs: PullRequest[]): HTMLElement {
         h("span", { class: "owner" }, owner + " / "), name),
       repo.isPrivate ? h("span", { class: "glock", title: "Private" }, svg(ICON.lock, 12)) : null,
       repo.isArchived ? h("span", { class: "badge" }, "archived") : null,
+      hideButton(repo, 12),
       h("span", { class: "count" + (prs.length ? "" : " zero"), title: `${repo.openCount} open` },
         prs.length === repo.openCount ? repo.openCount : `${prs.length}/${repo.openCount}`),
     ),

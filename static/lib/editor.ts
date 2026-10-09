@@ -1,7 +1,7 @@
 // Dialog for creating / editing / deleting a saved view.
 import type { Repo, View } from "../../src/types.ts";
 import { ICON, h, svg } from "./dom.ts";
-import { isPattern, ownerOf, ownersIn, viewMatcher } from "./state.ts";
+import { isPattern, ownerOf, ownersIn, viewExcluder, viewMatcher } from "./state.ts";
 
 const ENTRY_RE = /^[A-Za-z0-9_.*?-]+\/[A-Za-z0-9_.*?-]+$/;
 const OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
@@ -31,6 +31,7 @@ function toggle(list: string[], value: string, on: boolean): void {
 export function openViewEditor(opts: EditorOptions): void {
   const owners: string[] = [...(opts.view?.owners ?? [])];
   const entries: string[] = [...(opts.view?.repos ?? [])];
+  const excluded: string[] = [...(opts.view?.exclude ?? [])];
   const allRepos = [...opts.repos].sort((a, b) => a.name.localeCompare(b.name));
   const knownOwners = ownersIn(allRepos);
 
@@ -64,9 +65,11 @@ export function openViewEditor(opts: EditorOptions): void {
       }, ownerAvatar(o), o, h("span", { class: "owner-n" }, "new"))),
     );
 
-    // Individual repos.
+    // Individual repos. A repo that comes in through an owner or pattern can be unticked,
+    // which puts it on the exclude list instead of removing an entry.
     const exact = new Set(entries.map((e) => e.toLowerCase()));
     const byPattern = viewMatcher({ owners: [], repos: entries.filter(isPattern) });
+    const hidden = viewExcluder({ exclude: excluded });
     const q = search.value.trim().toLowerCase();
     const shown = allRepos.filter((r) => !q || r.name.toLowerCase().includes(q));
     list.replaceChildren(...(shown.length ? shown.map((r) => {
@@ -74,16 +77,25 @@ export function openViewEditor(opts: EditorOptions): void {
       const viaOwner = ownerSet.has(ownerOf(lower));
       const viaPattern = !viaOwner && !exact.has(lower) && byPattern(r.name);
       const implied = viaOwner || viaPattern;
-      return h("label", { class: "ed-row", title: viaOwner ? `Included because ${ownerOf(r.name)} is selected` : viaPattern ? "Included by a pattern" : null },
+      const isHidden = hidden(r.name);
+      const why = isHidden ? "Hidden from this view. Tick to show it again."
+        : viaOwner ? `Included because ${ownerOf(r.name)} is selected. Untick to hide it.`
+        : viaPattern ? "Included by a pattern. Untick to hide it." : null;
+      return h("label", { class: "ed-row" + (isHidden ? " is-hidden" : ""), title: why },
         h("input", {
           type: "checkbox",
-          checked: exact.has(lower) || implied,
-          disabled: implied,
-          onchange: (e: Event) => { toggle(entries, r.name, (e.target as HTMLInputElement).checked); refresh(); },
+          checked: (exact.has(lower) || implied) && !isHidden,
+          onchange: (e: Event) => {
+            const on = (e.target as HTMLInputElement).checked;
+            if (isHidden || implied) toggle(excluded, r.name, !on);
+            else toggle(entries, r.name, on);
+            refresh();
+          },
         }),
         h("span", { class: "ed-name" }, r.name),
         r.isPrivate ? svg(ICON.lock, 11, "muted") : null,
-        viaOwner ? h("span", { class: "badge" }, "owner") : viaPattern ? h("span", { class: "badge" }, "pattern") : null,
+        isHidden ? h("span", { class: "badge hidden" }, "hidden")
+          : viaOwner ? h("span", { class: "badge" }, "owner") : viaPattern ? h("span", { class: "badge" }, "pattern") : null,
         h("span", { class: "count" + (r.openCount ? "" : " zero") }, r.openCount));
     }) : [h("div", { class: "muted ed-none" }, "No repos match. Add it by name below.")]));
 
@@ -93,12 +105,15 @@ export function openViewEditor(opts: EditorOptions): void {
         h("button", { type: "button", title: `Remove ${o}`, "aria-label": `Remove ${o}`, onclick: () => { toggle(owners, o, false); refresh(); } }, svg(ICON.x, 12)))),
       ...entries.map((e) => h("span", { class: "chip" + (isPattern(e) ? " pattern" : "") }, e,
         h("button", { type: "button", title: `Remove ${e}`, "aria-label": `Remove ${e}`, onclick: () => { toggle(entries, e, false); refresh(); } }, svg(ICON.x, 12)))),
+      ...excluded.map((e) => h("span", { class: "chip hidden", title: "Hidden from this view" }, svg(ICON.eyeClosed, 12), e,
+        h("button", { type: "button", title: `Show ${e} again`, "aria-label": `Show ${e} again`, onclick: () => { toggle(excluded, e, false); refresh(); } }, svg(ICON.x, 12)))),
     );
-    const matcher = viewMatcher({ owners, repos: entries });
+    const matcher = viewMatcher({ owners, repos: entries, exclude: excluded });
     const matched = allRepos.filter((r) => matcher(r.name)).length;
     const parts: string[] = [];
     if (owners.length) parts.push(`${owners.length} owner${owners.length === 1 ? "" : "s"}`);
     if (entries.length) parts.push(`${entries.length} repo entr${entries.length === 1 ? "y" : "ies"}`);
+    if (excluded.length) parts.push(`${excluded.length} hidden`);
     summary.textContent = parts.length ? `${parts.join(" + ")} · ${matched} repo${matched === 1 ? "" : "s"} match` : "Nothing selected";
   }
 
@@ -138,7 +153,7 @@ export function openViewEditor(opts: EditorOptions): void {
     saveBtn.disabled = true;
     error.textContent = "";
     try {
-      await opts.onSave({ id: opts.view?.id ?? newId(name), name, owners: [...owners], repos: [...entries] });
+      await opts.onSave({ id: opts.view?.id ?? newId(name), name, owners: [...owners], repos: [...entries], exclude: [...excluded] });
       close();
     } catch (e) {
       error.textContent = (e as Error).message;
@@ -182,7 +197,8 @@ export function openViewEditor(opts: EditorOptions): void {
         list,
         h("div", { class: "ed-add" }, patternInput, h("button", { type: "button", onclick: addPattern }, "Add")),
         h("div", { class: "ed-hint muted" },
-          "Patterns like ", h("code", null, "my-org/web-*"), " match by name. Repos you add by name are fetched even if they aren't yours."),
+          "Patterns like ", h("code", null, "my-org/web-*"), " match by name. Repos you add by name are fetched even if they aren't yours. ",
+          "Untick a repo that an owner or pattern brings in to hide it from this view."),
       ),
       h("div", { class: "ed-field" }, h("span", null, "In this view"), chips),
       error,

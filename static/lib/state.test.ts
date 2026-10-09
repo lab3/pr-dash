@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 import type { DashboardData, PullRequest, Repo } from "../../src/types.ts";
-import { compute, state, watcherMatch } from "./state.ts";
+import { compute, reposIn, state, viewMatcher, watcherMatch, withExclusion } from "./state.ts";
 
 function pr(number: number, watcher: PullRequest["watcher"]): PullRequest {
   return {
@@ -67,4 +67,35 @@ test("watcher: search tokens filter PRs", () => {
   assert.deepEqual(compute(data(true)).withPrs[0].prs.map((p) => p.number), [1]);
   state.filter = "watcher:none";
   assert.deepEqual(compute(data(true)).withPrs[0].prs.map((p) => p.number), [2]);
+});
+
+const other: Repo = { ...repo, name: "o/sandbox", url: "https://github.com/o/sandbox", openCount: 1, prs: [without] };
+const two = (): DashboardData => ({ ...data(true), repos: [repo, other] });
+
+test("viewMatcher drops repos listed in exclude even when their owner is selected", () => {
+  const match = viewMatcher({ owners: ["o"], repos: [], exclude: ["O/Sandbox"] });
+  assert.equal(match("o/r"), true);
+  assert.equal(match("o/sandbox"), false);
+});
+
+test("viewMatcher applies exclude patterns", () => {
+  const match = viewMatcher({ owners: ["o"], repos: [], exclude: ["o/sand*"] });
+  assert.equal(match("o/sandbox"), false);
+  assert.equal(match("o/r"), true);
+});
+
+test("withExclusion adds a repo to a view's exclude list once, without touching the original", () => {
+  const view = { id: "work", name: "Work", owners: ["o"], repos: [], exclude: ["o/old"] };
+  const next = withExclusion(view, "o/sandbox");
+  assert.deepEqual(next.exclude, ["o/old", "o/sandbox"]);
+  assert.deepEqual(view.exclude, ["o/old"]);
+  assert.deepEqual(withExclusion(next, "O/SANDBOX").exclude, ["o/old", "o/sandbox"]);
+});
+
+test("compute leaves an excluded repo out of the active view", () => {
+  state.views = [{ id: "work", name: "Work", owners: ["o"], repos: [], exclude: ["o/sandbox"] }];
+  state.activeView = "work";
+  const c = compute(two());
+  assert.deepEqual(c.repos.map((r) => r.name), ["o/r"]);
+  assert.deepEqual(reposIn(two(), state.views[0]).map((r) => r.name), ["o/r"]);
 });

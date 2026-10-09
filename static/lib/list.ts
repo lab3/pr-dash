@@ -1,7 +1,7 @@
 // List layout: one full-width section per repo, one row per PR (the original view).
 import type { CheckState, PullRequest, Repo, ReviewDecision } from "../../src/types.ts";
 import { ICON, ago, daysSince, h, labelStyle, link, store, svg } from "./dom.ts";
-import { hooks, state, type RepoView } from "./state.ts";
+import { activeView, hooks, state, type RepoView } from "./state.ts";
 import { mergeIndicator, watcherBadges, watcherPanel } from "./watcher.ts";
 
 const ROW_CAP = 10; // PRs shown per repo before "Show N more"
@@ -40,6 +40,17 @@ export function moreOnGitHub(repo: Repo): HTMLElement | null {
     link(repo.url + "/pulls", {}, `+${repo.openCount - repo.prs.length} more open on GitHub ↗`));
 }
 
+/** "Hide from this view" button, only when a saved view is active (All repos has nowhere to save it). */
+export function hideButton(repo: Repo, px: number): HTMLElement | null {
+  const view = activeView();
+  if (!view) return null;
+  return h("button", {
+    type: "button", class: "hide-repo", title: `Hide ${repo.name} from "${view.name}"`,
+    "aria-label": `Hide ${repo.name} from this view`,
+    onclick: (e: Event) => { e.stopPropagation(); hooks.hideRepo(repo.name); },
+  }, svg(ICON.eyeClosed, px));
+}
+
 export function renderList(items: RepoView[]): HTMLElement[] {
   return items.map(renderRepo);
 }
@@ -49,7 +60,7 @@ function renderRepo({ repo, prs }: RepoView): HTMLElement {
   const expanded = state.expanded.has(repo.name);
   const card = h("section", { class: "repo" + (state.collapsed.has(repo.name) ? " collapsed" : "") });
   const toggle = (e: Event) => {
-    if ((e.target as Element).closest("a")) return;
+    if ((e.target as Element).closest("a, button")) return;
     const nowCollapsed = card.classList.toggle("collapsed");
     if (nowCollapsed) state.collapsed.add(repo.name);
     else state.collapsed.delete(repo.name);
@@ -64,6 +75,7 @@ function renderRepo({ repo, prs }: RepoView): HTMLElement {
       repo.isArchived ? h("span", { class: "badge" }, "archived") : null,
       h("span", { class: "repo-desc" }, repo.description ?? ""),
       link(repo.url + "/pulls", { class: "all" }, "all PRs ↗"),
+      hideButton(repo, 14),
       h("span", { class: "count", title: `${repo.openCount} open` },
         prs.length === repo.openCount ? repo.openCount : `${prs.length}/${repo.openCount}`),
     ),

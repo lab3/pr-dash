@@ -52,8 +52,12 @@ export const state: State = {
   timer: undefined,
 };
 
-/** Set by app.ts so render modules can ask for a re-render without importing app.ts. */
-export const hooks = { render: (): void => {} };
+/** Set by app.ts so render modules can ask for a re-render or a view change without importing app.ts. */
+export const hooks = {
+  render: (): void => {},
+  /** Hide a repo from the active saved view (no-op on "All repos"). */
+  hideRepo: (_repoName: string): void => {},
+};
 
 // ------------------------------------------------------------------ views
 
@@ -66,14 +70,33 @@ function globToRegExp(glob: string): RegExp {
 
 export const ownerOf = (repoName: string): string => repoName.split("/")[0];
 
-/** Does a repo belong to a view? (any listed owner, exact repo, or pattern) */
-export function viewMatcher(view: Pick<View, "owners" | "repos">): (repoName: string) => boolean {
+/** Does a repo belong to a view? (any listed owner, exact repo, or pattern; minus `exclude`) */
+export function viewMatcher(view: Pick<View, "owners" | "repos"> & Partial<Pick<View, "exclude">>): (repoName: string) => boolean {
   const owners = new Set(view.owners.map((o) => o.toLowerCase()));
   const exact = new Set(view.repos.filter((r) => !isPattern(r)).map((r) => r.toLowerCase()));
   const globs = view.repos.filter(isPattern).map(globToRegExp);
+  const hidden = viewExcluder(view);
   return (name) => {
     const n = name.toLowerCase();
-    return owners.has(ownerOf(n)) || exact.has(n) || globs.some((re) => re.test(n));
+    return !hidden(n) && (owners.has(ownerOf(n)) || exact.has(n) || globs.some((re) => re.test(n)));
+  };
+}
+
+/** A copy of the view with `repoName` on its exclude list (case-insensitive, added once). */
+export function withExclusion(view: View, repoName: string): View {
+  const exclude = view.exclude ?? [];
+  if (exclude.some((e) => e.toLowerCase() === repoName.toLowerCase())) return { ...view, exclude: [...exclude] };
+  return { ...view, exclude: [...exclude, repoName] };
+}
+
+/** Is a repo on a view's exclude list? (exact name or pattern) */
+export function viewExcluder(view: Partial<Pick<View, "exclude">>): (repoName: string) => boolean {
+  const list = view.exclude ?? [];
+  const exact = new Set(list.filter((r) => !isPattern(r)).map((r) => r.toLowerCase()));
+  const globs = list.filter(isPattern).map(globToRegExp);
+  return (name) => {
+    const n = name.toLowerCase();
+    return exact.has(n) || globs.some((re) => re.test(n));
   };
 }
 
