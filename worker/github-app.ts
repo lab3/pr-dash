@@ -1,6 +1,6 @@
 // GitHub App installation tokens for the Worker. Config "tokens" entries use "app:<installation id>"
 // (mint a JWT with the App's private key, exchange it for a one-hour installation token, cache it
-// for 50 minutes in this isolate) or "secret:NAME" (read a Worker secret, for local `wrangler dev`
+// in this isolate until 5 minutes before GitHub's `expires_at`) or "secret:NAME" (read a Worker secret, for local `wrangler dev`
 // with a plain gh token before the App exists).
 import { SignJWT, importPKCS8 } from "jose";
 import { DashError, type Config, type TokenSource } from "../shared/config-core.ts";
@@ -14,7 +14,8 @@ export interface AppDeps {
 
 const defaultDeps: AppDeps = { fetch: (...args) => fetch(...args), now: () => Date.now() };
 
-const CACHE_MS = 50 * 60_000;
+const FALLBACK_CACHE_MS = 50 * 60_000;
+const EXPIRY_MARGIN_MS = 5 * 60_000;
 const cache = new Map<string, { token: string; expiresAt: number }>();
 
 /** Tests call this between cases. */
@@ -22,14 +23,17 @@ export function resetTokenCache(): void {
   cache.clear();
 }
 
-/** A short-lived JWT that identifies the App itself. `iat` sits 60 s in the past to absorb clock drift. */
+/**
+ * A short-lived JWT that identifies the App itself. `iat` sits 60 s in the past to absorb clock drift,
+ * and `exp` stays 540 s ahead so it is under GitHub's 10-minute limit even if our clock runs fast.
+ */
 export async function mintAppJwt(appId: string, pkcs8: string, nowSec: number): Promise<string> {
   const key = await importPKCS8(pkcs8, "RS256");
   return new SignJWT({})
     .setProtectedHeader({ alg: "RS256" })
     .setIssuer(appId)
     .setIssuedAt(nowSec - 60)
-    .setExpirationTime(nowSec + 600)
+    .setExpirationTime(nowSec + 540)
     .sign(key);
 }
 
@@ -51,9 +55,11 @@ async function installationToken(id: string, env: Env, deps: AppDeps): Promise<s
     throw new DashError(`GitHub refused an installation token for installation ${id} (HTTP ${res.status}).`,
       "Check the App id, private key and that the App is installed on that org.", 502);
   }
-  const body = (await res.json()) as { token?: unknown };
+  const body = (await res.json()) as { token?: unknown; expires_at?: unknown };
   if (typeof body.token !== "string" || !body.token) throw new DashError(`GitHub returned no token for installation ${id}.`, null, 502);
-  cache.set(id, { token: body.token, expiresAt: deps.now() + CACHE_MS });
+  const issuedExpiry = typeof body.expires_at === "string" ? Date.parse(body.expires_at) : NaN;
+  const expiresAt = Number.isNaN(issuedExpiry) ? deps.now() + FALLBACK_CACHE_MS : issuedExpiry - EXPIRY_MARGIN_MS;
+  if (expiresAt > deps.now()) cache.set(id, { token: body.token, expiresAt });
   return body.token;
 }
 

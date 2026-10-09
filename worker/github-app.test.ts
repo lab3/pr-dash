@@ -9,13 +9,33 @@ const pair = await generateKeyPair("RS256", { extractable: true });
 const pkcs8 = await exportPKCS8(pair.privateKey);
 const spki = await exportSPKI(pair.publicKey);
 
-test("mintAppJwt signs RS256 with iss, iat 60s back, exp 10 min ahead", async () => {
+test("mintAppJwt signs RS256 with iss, iat 60s back, exp 540s ahead", async () => {
   const jwt = await mintAppJwt("12345", pkcs8, 1_700_000_000);
   const { payload, protectedHeader } = await jwtVerify(jwt, await importSPKI(spki, "RS256"), { currentDate: new Date(1_700_000_000 * 1000) });
   assert.equal(protectedHeader.alg, "RS256");
   assert.equal(payload.iss, "12345");
   assert.equal(payload.iat, 1_700_000_000 - 60);
-  assert.equal(payload.exp, 1_700_000_000 + 600);
+  assert.equal(payload.exp, 1_700_000_000 + 540);
+  assert.ok(payload.exp! - 1_700_000_000 <= 540, "exp stays clear of GitHub's 10-minute limit");
+});
+
+test("installation token is cached until expires_at minus 5 minutes", async () => {
+  resetTokenCache();
+  let now = 1_700_000_000_000;
+  let calls = 0;
+  const deps = {
+    now: () => now,
+    fetch: (async () => {
+      calls++;
+      return new Response(JSON.stringify({ token: `ghs_${calls}`, expires_at: new Date(1_700_000_000_000 + 20 * 60_000).toISOString() }), { status: 201 });
+    }) as typeof fetch,
+  };
+  const t = appTokens({ ...DEFAULTS, tokens: { o: "app:5" } }, fakeEnv(), deps);
+  assert.equal(await t.forOwner("o"), "ghs_1");
+  now += 14 * 60_000;
+  assert.equal(await t.forOwner("o"), "ghs_1", "still inside expires_at - 5 min");
+  now += 2 * 60_000;
+  assert.equal(await t.forOwner("o"), "ghs_2", "past expires_at - 5 min, re-minted");
 });
 
 function fakeEnv(over: Partial<Env> = {}): Env {
