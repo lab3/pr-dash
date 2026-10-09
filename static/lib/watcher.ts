@@ -2,7 +2,7 @@
 // mergeable indicator, the grid status dot, and the collapsible review panel.
 import type { Finding, PullRequest, WatcherReview, WatcherStatus } from "../../src/types.ts";
 import { ago, h, html, link } from "./dom.ts";
-import { hooks, state } from "./state.ts";
+import { hooks, residualBlockers, state } from "./state.ts";
 
 export const STATUS_LABEL: Record<WatcherStatus, string> = {
   open: "open",
@@ -37,13 +37,19 @@ export function watcherDot(pr: PullRequest): HTMLElement | null {
   return h("span", { class: `wdot ${w.status}`, title: `Watcher: ${countLabel(w.open, w.total, w.status)}` });
 }
 
-/** Green "Ready to merge", or gray with what's blocking. Shown for every PR. */
-export function mergeIndicator(pr: PullRequest): HTMLElement {
+/**
+ * Green "Ready to merge", or gray with what's blocking. Blockers the row already shows as a
+ * badge or on the CI line are left out; when nothing is left to say, nothing is rendered.
+ * The tooltip always carries the full list.
+ */
+export function mergeIndicator(pr: PullRequest): HTMLElement | null {
   const ready = pr.blockers.length === 0;
+  const rest = residualBlockers(pr.blockers);
+  if (!ready && !rest.length) return null;
   return h("span", {
     class: "merge " + (ready ? "ready" : "blocked"),
     title: ready ? "No open Watcher findings, mergeable, up to date, CI passing, not a draft, no changes requested" : "Blocking: " + pr.blockers.join(", "),
-  }, h("span", { class: "dot" }), ready ? "Ready to merge" : pr.blockers.join(" · "));
+  }, h("span", { class: "dot" }), ready ? "Ready to merge" : rest.join(" · "));
 }
 
 /** Collapsible panel under a list row: latest review, then earlier ones. Closed by default. */

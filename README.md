@@ -91,7 +91,9 @@ A finding is a review thread the bot opened. It counts as open until the thread 
 
 Click **Watcher review** under a row to see the summary (GitHub's rendered markdown, passed through a strict allowlist on the server), the findings with `path:line` links, and earlier reviews.
 
-**Ready to merge** turns green when there are no open findings, the PR has a Watcher review whose data loaded in full, GitHub has finished its merge check and reports the PR as mergeable, the branch is up to date with its base, CI is passing or absent, it isn't a draft, nobody is requesting changes, and branch protection isn't holding it. Otherwise it's gray and lists what's blocking, for example `2 open findings · CI pending · conflicts`. Right after a push, GitHub has not computed mergeability yet, so the indicator shows `merge check pending` until it has.
+**Ready to merge** turns green when there are no open findings, the PR has a Watcher review whose data loaded in full, GitHub has finished its merge check and reports the PR as mergeable, the branch is up to date with its base, CI is passing or absent, it isn't a draft, nobody is requesting changes, and branch protection isn't holding it. Otherwise it's gray and lists what's blocking, for example `conflicts · behind base`. Blockers the row already shows, as the Watcher, Draft or review badge or on the CI line, are left off that list, and when nothing is left the line is hidden; hover it (or the badges) for the full set. Right after a push, GitHub has not computed mergeability yet, so the indicator shows `merge check pending` until it has.
+
+In the list layout every status badge (Draft, Your review, Approved or Changes requested, Watcher count, nits, new commits) sits in the right-hand column above the CI line, so one glance at the right edge tells the state of a PR. A row with failing CI or merge conflicts gets a faint red background in both layouts.
 
 Filter with the **Only open Watcher findings** toggle, or type `watcher:open`, `watcher:addressed`, `watcher:partly`, `watcher:summary` or `watcher:none` in the filter box.
 

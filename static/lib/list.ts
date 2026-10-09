@@ -88,19 +88,31 @@ function renderRepo({ repo, prs }: RepoView): HTMLElement {
   return card;
 }
 
-function renderPr(pr: PullRequest): HTMLElement {
+/** True when the PR is in a broken state that should tint the whole row: CI failing or merge conflicts. */
+export function isBroken(pr: PullRequest): boolean {
+  return pr.ci === "FAILURE" || pr.ci === "ERROR" || pr.mergeable === "CONFLICTING";
+}
+
+/** Draft, Your review, review decision and Watcher badges, in that order. */
+export function statusBadges(pr: PullRequest): HTMLElement[] {
   const review = pr.review ? REVIEW[pr.review] : null;
+  return [
+    pr.isDraft ? h("span", { class: "badge draft" }, "Draft") : null,
+    pr.reviewRequestedFromMe ? h("span", { class: "badge you" }, "Your review") : null,
+    review ? h("span", { class: "badge " + review[0] }, review[1]) : null,
+    ...watcherBadges(pr),
+  ].filter((x): x is HTMLElement => !!x);
+}
+
+function renderPr(pr: PullRequest): HTMLElement {
   const reviewers = [...pr.requestedReviewers, ...pr.requestedTeams.map((t) => "@" + t)];
   const avatar = avatarUrl(pr, 16);
-  return h("li", { class: "pr" + (pr.isDraft ? " is-draft" : "") + (pr.reviewRequestedFromMe ? " attn" : "") },
+  const badges = statusBadges(pr);
+  return h("li", { class: "pr" + (pr.isDraft ? " is-draft" : "") + (pr.reviewRequestedFromMe ? " attn" : "") + (isBroken(pr) ? " is-broken" : "") },
     svg(pr.isDraft ? ICON.draft : ICON.pr, 16, "pr-icon " + (pr.isDraft ? "draft" : "open")),
     h("div", { class: "pr-main" },
       h("div", { class: "pr-title-row" },
         link(pr.url, { class: "pr-title" }, pr.title, " ", h("span", { class: "pr-num" }, "#" + pr.number)),
-        pr.isDraft ? h("span", { class: "badge draft" }, "Draft") : null,
-        pr.reviewRequestedFromMe ? h("span", { class: "badge you" }, "Your review") : null,
-        review ? h("span", { class: "badge " + review[0] }, review[1]) : null,
-        ...watcherBadges(pr),
         pr.labels.length ? h("span", { class: "labels" },
           pr.labels.map((l) => h("span", { class: "label", style: labelStyle(l.color) }, l.name))) : null,
       ),
@@ -118,6 +130,7 @@ function renderPr(pr: PullRequest): HTMLElement {
       ),
     ),
     h("div", { class: "pr-side" },
+      badges.length ? h("div", { class: "pr-badges" }, badges) : null,
       mergeIndicator(pr),
       pr.ci ? h("span", { class: "ci " + pr.ci, title: `Checks ${CI[pr.ci]}` }, h("span", { class: "dot" }), CI[pr.ci]) : null,
       h("span", { class: "diff" },

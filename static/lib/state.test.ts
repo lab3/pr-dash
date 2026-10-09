@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 import type { DashboardData, PullRequest, Repo } from "../../src/types.ts";
-import { compute, reposIn, state, viewMatcher, watcherMatch, withExclusion } from "./state.ts";
+import { compute, reposIn, residualBlockers, state, viewMatcher, watcherMatch, withExclusion } from "./state.ts";
 
 function pr(number: number, watcher: PullRequest["watcher"]): PullRequest {
   return {
@@ -82,6 +82,16 @@ test("viewMatcher applies exclude patterns", () => {
   const match = viewMatcher({ owners: ["o"], repos: [], exclude: ["o/sand*"] });
   assert.equal(match("o/sandbox"), false);
   assert.equal(match("o/r"), true);
+});
+
+test("residualBlockers drops blockers the row already shows as a badge or CI line", () => {
+  assert.deepEqual(
+    residualBlockers(["2 open findings", "draft", "changes requested", "CI failing", "conflicts", "behind base"]),
+    ["conflicts", "behind base"],
+  );
+  assert.deepEqual(residualBlockers(["1 open finding", "CI pending"]), []);
+  assert.deepEqual(residualBlockers(["no Watcher review", "Watcher data unavailable", "Watcher findings incomplete", "merge check pending", "blocked by branch rules"]),
+    ["no Watcher review", "Watcher data unavailable", "Watcher findings incomplete", "merge check pending", "blocked by branch rules"]);
 });
 
 test("withExclusion adds a repo to a view's exclude list once, without touching the original", () => {
