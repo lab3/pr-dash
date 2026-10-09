@@ -175,6 +175,7 @@ main { padding: 12px 24px 24px; max-width: 1280px; margin: 0 auto; }
 .ci.SUCCESS .dot { background: var(--green); }
 .ci.FAILURE .dot, .ci.ERROR .dot { background: var(--red); }
 .ci.PENDING .dot, .ci.EXPECTED .dot { background: var(--amber); }
+.pr-size { display: inline-flex; align-items: center; gap: 10px; white-space: nowrap; }
 .diff { font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
 .diff .add { color: var(--green); }
 .diff .del { color: var(--red); }
