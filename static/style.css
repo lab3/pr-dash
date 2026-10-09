@@ -108,6 +108,13 @@ main { padding: 12px 24px 24px; max-width: 1280px; margin: 0 auto; }
 }
 @media (prefers-color-scheme: dark) { .count { color: #0d1117; } }
 .repo-head .all { font-size: 12px; color: var(--muted); flex: none; }
+/* "Hide from this view" eye; faint until the repo head or card is hovered. */
+.hide-repo {
+  display: inline-flex; flex: none; padding: 3px; border: 0; border-radius: 6px; cursor: pointer;
+  background: none; color: var(--muted); opacity: 0.35;
+}
+.repo-head:hover .hide-repo, .gcard-head:hover .hide-repo, .hide-repo:focus-visible { opacity: 1; }
+.hide-repo:hover { color: var(--text); background: var(--border); }
 .lang-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
 
 .badge {
@@ -327,6 +334,10 @@ dialog.editor::backdrop { background: rgba(10, 12, 16, .45); }
   border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border);
 }
 .chip.pattern { border-style: dashed; color: var(--accent); }
+.chip.hidden { color: var(--muted); text-decoration: line-through; }
+.chip.hidden svg { text-decoration: none; }
+.badge.hidden { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, transparent); }
+.ed-row.is-hidden .ed-name { color: var(--muted); text-decoration: line-through; }
 .editor .chip button { border: 0; background: none; padding: 2px; border-radius: 50%; display: inline-flex; color: var(--muted); }
 .editor .chip button:hover { color: var(--red); }
 .ed-error { color: var(--red); font-size: 13px; min-height: 0; }

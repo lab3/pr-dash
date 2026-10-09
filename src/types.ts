@@ -133,13 +133,15 @@ export interface DashboardData {
 
 /**
  * A saved set of repos: every repo of the listed `owners` (users or orgs), plus `repos`
- * entries, which are "owner/name" or globs like "my-org/web-*".
+ * entries, which are "owner/name" or globs like "my-org/web-*", minus `exclude` entries
+ * in the same syntax.
  */
 export interface View {
   id: string;
   name: string;
   owners: string[];
   repos: string[];
+  exclude: string[];
 }
 
 export interface ViewsPayload {

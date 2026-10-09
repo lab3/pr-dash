@@ -7,7 +7,7 @@ import { openViewEditor } from "./lib/editor.ts";
 import { renderGrid } from "./lib/grid.ts";
 import { renderEmptyList, renderList } from "./lib/list.ts";
 import {
-  ALL_VIEW, activeView, compute, hooks, reposIn, state,
+  ALL_VIEW, activeView, compute, hooks, reposIn, state, withExclusion,
   type Computed, type Layout, type SortKey, type ToggleKey,
 } from "./lib/state.ts";
 
@@ -86,9 +86,22 @@ async function saveViews(views: View[]): Promise<void> {
     body: JSON.stringify({ views }),
   });
   state.views = res.views;
+  render();
   // If the views named a repo or owner the server hasn't fetched, it marked its cache stale,
   // so this picks up the new repos; otherwise it's answered from cache.
   void load(false);
+}
+
+/** The eye button on a repo: add it to the active view's exclude list and save. */
+async function hideRepo(repoName: string): Promise<void> {
+  const view = activeView();
+  if (!view) return;
+  try {
+    await saveViews(state.views.map((v) => (v.id === view.id ? withExclusion(view, repoName) : v)));
+  } catch (err) {
+    state.error = { message: `Couldn't hide ${repoName}: ` + (err as Error).message };
+    render();
+  }
 }
 
 function scheduleRefresh(seconds: number): void {
@@ -131,6 +144,7 @@ function editView(view: View | null): void {
 // ------------------------------------------------------------------ rendering
 
 hooks.render = render;
+hooks.hideRepo = (name) => void hideRepo(name);
 
 function render(): void {
   renderTabs();

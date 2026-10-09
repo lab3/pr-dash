@@ -46,6 +46,8 @@ To make your own view, click **+ New view**, give it a name, and choose what goe
 
 To change or delete a view, open it and click the pencil on its tab. The dashboard remembers the last view and layout you used, so a view like "My repos" acts as a saved filter.
 
+**Hiding a repo.** An owner or pattern can bring in repos you never want to see in that view. In a saved view, hover a repo's header and click the eye to hide it from that view; the repo is still in **All repos**. In the editor, untick a repo that an owner or pattern brings in to hide it, and tick it (or click the × on its chip under "In this view") to show it again. To hide a repo everywhere, use `exclude` in the config instead.
+
 Each view has its own link, `http://localhost:8787/#view=<id>`, so you can bookmark it. Repos you added to a view one by one are always shown, even with no open PRs. Repos that come in through an owner or pattern follow the **Show repos with no PRs** toggle, so a big org doesn't fill the page with empty cards.
 
 **Owner filter.** When a view covers more than one owner, an owner dropdown appears next to the toggles. Use it to narrow the current view to one user or org. Clear it with the **×** on the "owner:" chip.
@@ -56,7 +58,7 @@ Views are saved in `views.json` next to `server.ts`; you can also edit that file
 {
   "views": [
     { "id": "platform", "name": "Platform", "owners": [], "repos": ["my-org/api", "my-org/infra", "my-org/*-service"] },
-    { "id": "orgs", "name": "Work orgs", "owners": ["my-org", "acme"], "repos": ["your-user/dotfiles"] }
+    { "id": "orgs", "name": "Work orgs", "owners": ["my-org", "acme"], "repos": ["your-user/dotfiles"], "exclude": ["acme/sandbox", "my-org/archive-*"] }
   ]
 }
 ```

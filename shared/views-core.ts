@@ -33,10 +33,11 @@ export function validateViews(input: unknown): View[] {
     if (!name || name.length > 60) throw new DashError(`${where} needs a name (max 60 characters).`, null, 400);
     const rawRepos = v.repos ?? [];
     const rawOwners = v.owners ?? [];
-    if (!Array.isArray(rawRepos) || !Array.isArray(rawOwners)) {
-      throw new DashError(`${where}: "repos" and "owners" must be lists.`, null, 400);
+    const rawExclude = v.exclude ?? [];
+    if (!Array.isArray(rawRepos) || !Array.isArray(rawOwners) || !Array.isArray(rawExclude)) {
+      throw new DashError(`${where}: "repos", "owners" and "exclude" must be lists.`, null, 400);
     }
-    if (rawRepos.length + rawOwners.length > MAX_ENTRIES) throw new DashError(`${where} has too many entries.`, null, 400);
+    if (rawRepos.length + rawOwners.length + rawExclude.length > MAX_ENTRIES) throw new DashError(`${where} has too many entries.`, null, 400);
     const dedupe = (items: unknown[], re: RegExp, what: string): string[] => {
       const out: string[] = [];
       const lower = new Set<string>();
@@ -52,7 +53,8 @@ export function validateViews(input: unknown): View[] {
     };
     const owners = dedupe(rawOwners, OWNER_RE, "a valid user or org name");
     const repos = dedupe(rawRepos, ENTRY_RE, "owner/name or a pattern");
-    return { id, name, owners, repos };
+    const exclude = dedupe(rawExclude, ENTRY_RE, "owner/name or a pattern");
+    return { id, name, owners, repos, exclude };
   });
 }
 
