@@ -138,6 +138,16 @@ export function missingOwnersIn(data: DashboardData, view: View | null): string[
   return view.owners.filter((o) => !have.has(o.toLowerCase()));
 }
 
+// ------------------------------------------------------------------ merge line
+
+/** Blockers a list row already shows elsewhere: as the Watcher, Draft or review badge, or on the CI line. */
+const SHOWN_AS_BADGE = /^(\d+ open findings?|draft|changes requested|CI failing|CI pending)$/;
+
+/** The blockers left to print on the merge line once badges and the CI line have said their part. */
+export function residualBlockers(blockers: string[]): string[] {
+  return blockers.filter((b) => !SHOWN_AS_BADGE.test(b));
+}
+
 // ------------------------------------------------------------------ filtering
 
 export interface RepoView {

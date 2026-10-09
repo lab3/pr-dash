@@ -1,7 +1,7 @@
 // Grid layout: one card per repo with a compact PR list.
 import type { PullRequest, Repo } from "../../src/types.ts";
 import { ICON, ago, daysSince, h, link, svg } from "./dom.ts";
-import { CI, REVIEW, avatarUrl, expandButton, hideButton, moreOnGitHub } from "./list.ts";
+import { CI, REVIEW, avatarUrl, expandButton, hideButton, isBroken, moreOnGitHub } from "./list.ts";
 import { state, type RepoView } from "./state.ts";
 import { watcherDot } from "./watcher.ts";
 
@@ -52,7 +52,7 @@ function card(repo: Repo, prs: PullRequest[]): HTMLElement {
 function row(pr: PullRequest): HTMLElement {
   const review = pr.review ? REVIEW[pr.review] : null;
   const avatar = avatarUrl(pr, 14);
-  return h("li", { class: "gpr" + (pr.isDraft ? " is-draft" : "") + (pr.reviewRequestedFromMe ? " attn" : "") },
+  return h("li", { class: "gpr" + (pr.isDraft ? " is-draft" : "") + (pr.reviewRequestedFromMe ? " attn" : "") + (isBroken(pr) ? " is-broken" : "") },
     svg(pr.isDraft ? ICON.draft : ICON.pr, 14, "pr-icon " + (pr.isDraft ? "draft" : "open")),
     h("div", { class: "gpr-main" },
       link(pr.url, { class: "gpr-title", title: pr.title }, pr.title, " ", h("span", { class: "pr-num" }, "#" + pr.number)),
