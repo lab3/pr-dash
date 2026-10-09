@@ -54,8 +54,9 @@ jobs:
           # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
           # prompt: 'Update the pull request description to include a summary of changes.'
 
-          # Let Claude sync a branch that moved under it and run the tests/checks. The git patterns
-          # are prefix matches pinned to the origin remote, so arbitrary remotes or refs are not pre-approved.
+          # Opus 5.5 at high effort (its default is medium). Let Claude sync a branch that moved under
+          # it and run the tests/checks. The git patterns are prefix matches pinned to the origin
+          # remote, so arbitrary remotes or refs are not pre-approved.
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
-          claude_args: '--allowedTools "Bash(git fetch origin:*),Bash(git pull --rebase origin:*),Bash(git pull origin:*),Bash(git rebase origin/:*),Bash(git status:*),Bash(git log:*),Bash(git diff:*),Bash(npm ci),Bash(npm test:*),Bash(npm run check:*)"'
+          claude_args: '--model claude-opus-5-5 --effort high --allowedTools "Bash(git fetch origin:*),Bash(git pull --rebase origin:*),Bash(git pull origin:*),Bash(git rebase origin/:*),Bash(git status:*),Bash(git log:*),Bash(git diff:*),Bash(npm ci),Bash(npm test:*),Bash(npm run check:*)"'
