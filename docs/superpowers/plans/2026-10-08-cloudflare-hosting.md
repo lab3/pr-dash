@@ -2114,12 +2114,6 @@ jobs:
     concurrency:
       group: deploy-production
       cancel-in-progress: false
-    env:
-      CF_ACCOUNT_ID: ${{ vars.CF_ACCOUNT_ID }}
-      PRDASH_HOSTNAME: ${{ vars.PRDASH_HOSTNAME }}
-      PRDASH_KV_ID: ${{ vars.PRDASH_KV_ID }}
-      ACCESS_TEAM_DOMAIN: ${{ vars.ACCESS_TEAM_DOMAIN }}
-      ACCESS_AUD: ${{ vars.ACCESS_AUD }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -2128,9 +2122,17 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      # No install scripts, and the deploy values reach only the render and probe steps.
+      - run: npm ci --ignore-scripts
       - run: npm run build
-      - run: node scripts/render-wrangler.mjs
+      - name: Render wrangler.deploy.json
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          PRDASH_HOSTNAME: ${{ secrets.PRDASH_HOSTNAME }}
+          PRDASH_KV_ID: ${{ secrets.PRDASH_KV_ID }}
+          ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
+          ACCESS_AUD: ${{ secrets.ACCESS_AUD }}
+        run: node scripts/render-wrangler.mjs
       - run: node scripts/check-config.mjs wrangler.deploy.json
       - name: Deploy
         id: deploy
@@ -2140,6 +2142,10 @@ jobs:
       # Runs whenever the deploy step ran, even if it failed after the version went live.
       - name: Check that the Access sign-in guards the site
         if: ${{ !cancelled() && steps.deploy.outcome != 'skipped' }}
+        env:
+          PRDASH_HOSTNAME: ${{ secrets.PRDASH_HOSTNAME }}
+          ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
+          ACCESS_AUD: ${{ secrets.ACCESS_AUD }}
         run: node scripts/check-access.mjs "https://$PRDASH_HOSTNAME"
 
   probe:
@@ -2147,10 +2153,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: production
-    env:
-      PRDASH_HOSTNAME: ${{ vars.PRDASH_HOSTNAME }}
-      ACCESS_TEAM_DOMAIN: ${{ vars.ACCESS_TEAM_DOMAIN }}
-      ACCESS_AUD: ${{ vars.ACCESS_AUD }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -2158,7 +2160,12 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-      - run: node scripts/check-access.mjs "https://$PRDASH_HOSTNAME"
+      - name: Check that the Access sign-in guards the site
+        env:
+          PRDASH_HOSTNAME: ${{ secrets.PRDASH_HOSTNAME }}
+          ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
+          ACCESS_AUD: ${{ secrets.ACCESS_AUD }}
+        run: node scripts/check-access.mjs "https://$PRDASH_HOSTNAME"
 ```
 
 Delete `.github/workflows/check.yml`; `deploy.yml`'s `check` job replaces it. (The `claude.yml` workflow stays.)
@@ -2199,7 +2206,7 @@ One-time setup (your machine):
 2. `npx wrangler kv namespace create PRDASH`; note the id.
 3. `npx wrangler secret put GH_APP_ID` and `npx wrangler secret put GH_APP_PRIVATE_KEY` (PKCS#8) against the rendered config: `node scripts/render-wrangler.mjs` first with the five variables exported, then `--config wrangler.deploy.json`.
 4. Create the Access application for the hostname and note its AUD.
-5. Create a Cloudflare API token scoped to Workers Scripts: Edit and Workers Routes: Edit for the zone. Put it in the GitHub `production` environment as `CLOUDFLARE_API_TOKEN`, with variables `CF_ACCOUNT_ID`, `PRDASH_HOSTNAME`, `PRDASH_KV_ID`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`.
+5. Create a Cloudflare API token scoped to Workers Scripts: Edit and Workers Routes: Edit for the zone. Put it in the GitHub `production` environment as `CLOUDFLARE_API_TOKEN`, with *secrets* (Actions prints variables unmasked) `CF_ACCOUNT_ID`, `PRDASH_HOSTNAME`, `PRDASH_KV_ID`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`.
 6. Write `config.hosted.json` (gitignored): `owners`, `allowed_emails`, `viewer_login`, `tokens` as `{"my-org": "app:<installation id>"}`, and run `node scripts/seed-kv.mjs config.hosted.json views.json`.
 7. Push to `main`. The deploy job renders the config, deploys, and checks that a signed-out request redirects to your Access login. Then sign in and confirm the page.
 
