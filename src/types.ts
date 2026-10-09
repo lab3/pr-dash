@@ -127,6 +127,8 @@ export interface DashboardData {
   refreshSeconds: number;
   /** `bot_reviews` from config, so the UI knows whether to show Watcher chrome. */
   botReviews: boolean;
+  /** True when served by the Cloudflare Worker, whose data comes from the cron. */
+  hosted?: boolean;
 }
 
 /**

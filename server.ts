@@ -17,7 +17,8 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 
 import { CONFIG_PATH, DashError, ROOT, Tokens, loadConfig, type Config } from "./src/config.ts";
-import { collect } from "./src/github.ts";
+import { publicConfig } from "./shared/config-core.ts";
+import { collect } from "./shared/github.ts";
 import type { ApiError, DashboardData, ViewsPayload } from "./src/types.ts";
 import { exactViewRepos, loadViews, saveViews, validateViews, viewOwners } from "./src/views.ts";
 
@@ -104,7 +105,7 @@ function sendText(res: ServerResponse, status: number, text: string): void {
   res.end(text);
 }
 
-function sendJson(res: ServerResponse, status: number, body: DashboardData | ViewsPayload | ApiError): void {
+function sendJson(res: ServerResponse, status: number, body: DashboardData | ViewsPayload | ApiError | Record<string, unknown>): void {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
   res.end(JSON.stringify(body));
 }
@@ -152,7 +153,7 @@ async function readJson(req: IncomingMessage, limit = 256 * 1024): Promise<unkno
 
 // --------------------------------------------------------------------------- routes
 
-async function api(req: IncomingMessage, url: URL): Promise<DashboardData | ViewsPayload> {
+async function api(req: IncomingMessage, url: URL): Promise<DashboardData | ViewsPayload | Record<string, unknown>> {
   if (url.pathname === "/api/prs" && req.method === "GET") {
     return getData(["1", "true"].includes(url.searchParams.get("refresh") ?? ""));
   }
@@ -169,6 +170,11 @@ async function api(req: IncomingMessage, url: URL): Promise<DashboardData | View
     const newOwner = viewOwners(views).some((o) => !fetchedOwners.has(o.toLowerCase()));
     if (newRepo || newOwner) fetchedAt = 0;
     return { views };
+  }
+  if (url.pathname === "/api/health" && req.method === "GET") return { ok: true };
+  if (url.pathname === "/api/config" && req.method === "GET") return publicConfig(loadConfig());
+  if (url.pathname === "/api/config" && req.method === "PUT") {
+    throw new DashError("Config is a file in local mode.", "Edit config.json; it is re-read on the next refresh.", 405);
   }
   throw new DashError("Not found", null, 404);
 }

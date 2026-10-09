@@ -4,3 +4,8 @@ node_modules/
 views.json
 .superpowers/
 .claude/worktrees/
+dist/
+.dev.vars
+.wrangler/
+wrangler.deploy.json
+config.hosted.json

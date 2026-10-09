@@ -3,66 +3,14 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { DEFAULTS, DashError, normalizeConfig, type Config, type TokenSource } from "../shared/config-core.ts";
+
+export { DEFAULTS, DashError, normalizeConfig, type Config, type TokenSource };
+
 const execFileAsync = promisify(execFile);
 
 export const ROOT = path.resolve(import.meta.dirname, "..");
 export const CONFIG_PATH = process.env.PR_DASH_CONFIG ?? path.join(ROOT, "config.json");
-
-export interface Config {
-  /** Repos you own, collaborate on, or reach through your orgs. */
-  mine: boolean;
-  /** Extra users/orgs whose repos to include, e.g. ["my-org"]. */
-  owners: string[];
-  /** Explicit "owner/name" repos. */
-  repos: string[];
-  /** "owner/name" or globs like "my-org/old-*". */
-  exclude: string[];
-  /** Optional token specs: {"default": "gh", "my-org": "env:MYORG_GH_TOKEN"}. */
-  tokens: Record<string, string>;
-  include_archived: boolean;
-  include_forks: boolean;
-  max_repos_per_source: number;
-  prs_per_repo: number;
-  host: string;
-  port: number;
-  /** How long the server reuses a GitHub response. */
-  cache_seconds: number;
-  /** How often the page auto-refreshes. */
-  refresh_seconds: number;
-  /** Fetch bot (PR Watcher) reviews and show their status. */
-  bot_reviews: boolean;
-  /** Bot logins whose reviews count, in GitHub's "[bot]" form. */
-  bot_reviewers: string[];
-}
-
-export const DEFAULTS: Config = {
-  mine: true,
-  owners: [],
-  repos: [],
-  exclude: [],
-  tokens: {},
-  include_archived: false,
-  include_forks: false,
-  max_repos_per_source: 200,
-  prs_per_repo: 50,
-  host: "127.0.0.1",
-  port: 8787,
-  cache_seconds: 120,
-  refresh_seconds: 300,
-  bot_reviews: true,
-  bot_reviewers: ["grok-pr-watcher[bot]"],
-};
-
-export class DashError extends Error {
-  hint: string | null;
-  status: number;
-
-  constructor(message: string, hint: string | null = null, status = 502) {
-    super(message);
-    this.hint = hint;
-    this.status = status;
-  }
-}
 
 export function loadConfig(): Config {
   const cfg: Config = { ...DEFAULTS };
@@ -82,17 +30,6 @@ export function loadConfig(): Config {
     }
   }
   return normalizeConfig(cfg);
-}
-
-/** Coerce user-supplied values into the shapes the rest of the app assumes. */
-export function normalizeConfig(cfg: Config): Config {
-  const out = { ...cfg };
-  out.prs_per_repo = Math.max(1, Math.min(100, Math.trunc(Number(cfg.prs_per_repo)) || 50));
-  out.bot_reviews = cfg.bot_reviews !== false;
-  out.bot_reviewers = Array.isArray(cfg.bot_reviewers)
-    ? cfg.bot_reviewers.map((b) => String(b).trim()).filter(Boolean)
-    : DEFAULTS.bot_reviewers;
-  return out;
 }
 
 // --------------------------------------------------------------------------- tokens
@@ -118,7 +55,7 @@ export async function resolveTokenSpec(spec: string): Promise<string | null> {
 }
 
 /** Default token plus optional per-owner overrides from config "tokens". */
-export class Tokens {
+export class Tokens implements TokenSource {
   specs: Record<string, string>;
   cache = new Map<string, string>();
 

@@ -1,0 +1,210 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import type { RawBotReview, RawThread } from "./botreviews.ts";
+import { DEFAULTS, type Config } from "./config-core.ts";
+import { VIEWER_QUERY, attachBotReviews, botReviewsQuery, capWarning, collect, explicitQuery, hasBotReview, ownerQuery, type BotReviewRaw, type Context } from "./github.ts";
+import type { PullRequest, Repo } from "../src/types.ts";
+
+test("repo query carries the Watcher marker fields", () => {
+  for (const field of ["id", "headRefOid", "mergeable", "mergeStateStatus", "latestReviews(first: 10)"]) {
+    assert.ok(VIEWER_QUERY.includes(field), `missing ${field}`);
+  }
+});
+
+test("botReviewsQuery has one aliased reviews field per bot", () => {
+  const q = botReviewsQuery(2);
+  assert.ok(q.includes("$ids: [ID!]!"));
+  assert.ok(q.includes("$a0: String!") && q.includes("$a1: String!"));
+  assert.ok(q.includes("b0: reviews(author: $a0, last: 10)"));
+  assert.ok(q.includes("b1: reviews(author: $a1, last: 10)"));
+  assert.ok(q.includes("nodes(ids: $ids)"));
+  assert.ok(q.includes("reviewThreads(last: 50)"));
+  assert.ok(q.includes("pullRequestReview { id }"));
+});
+
+test("hasBotReview matches the bare GraphQL login against the [bot] config form", () => {
+  const bots = new Set(["grok-pr-watcher[bot]"]);
+  assert.equal(hasBotReview({ latestReviews: { nodes: [{ author: { __typename: "Bot", login: "grok-pr-watcher" } }] } }, bots), true);
+  assert.equal(hasBotReview({ latestReviews: { nodes: [{ author: { __typename: "User", login: "len" } }] } }, bots), false);
+  assert.equal(hasBotReview({ latestReviews: { nodes: [{ author: null }] } }, bots), false);
+  assert.equal(hasBotReview({ latestReviews: null }, bots), false);
+});
+
+test("capWarning only fires past the thread cap", () => {
+  assert.equal(capWarning("o/r#1", 50), null);
+  assert.equal(capWarning("o/r#1", 51), "o/r#1: only the newest 50 of 51 review threads were checked.");
+});
+
+// ---------------------------------------------------------------- attachBotReviews
+
+function fakePr(id: string, number: number): PullRequest {
+  return {
+    id, number, title: "t", url: `https://github.com/o/r/pull/${number}`, isDraft: false,
+    createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-08T00:00:00Z", head: "f", base: "main",
+    review: null, ci: "SUCCESS", additions: 1, deletions: 1, comments: 0, author: "len", authorUrl: null,
+    avatar: null, labels: [], requestedReviewers: [], requestedTeams: [], isMine: false, reviewRequestedFromMe: false,
+    headOid: "head1", mergeable: "MERGEABLE", mergeState: "CLEAN", watcher: null, watcherIssue: null, blockers: [],
+  };
+}
+
+function fakeRepo(prs: PullRequest[]): Repo {
+  return { name: "o/r", url: "https://github.com/o/r", description: null, isPrivate: false, isArchived: false,
+    isFork: false, pushedAt: null, language: null, languageColor: null, openCount: prs.length, prs };
+}
+
+const ctx = (): Context => ({ warnings: [], viewer: "len", rate: null, requests: 0, maxRequests: 40 });
+const tokens = { forOwner: async () => "token" };
+const cfg: Config = { ...DEFAULTS };
+
+const rawReview: RawBotReview = {
+  id: "r1", state: "COMMENTED", submittedAt: "2026-10-08T10:00:00Z", url: "https://github.com/o/r/pull/1#pullrequestreview-1",
+  bodyHTML: "<p>sum</p>", author: { __typename: "Bot", login: "grok-pr-watcher" }, commit: { oid: "head1" },
+};
+const rawThread: RawThread = {
+  isResolved: false, isOutdated: false, path: "a.ts", line: 3,
+  comments: { totalCount: 1, nodes: [{ url: "https://github.com/o/r/pull/1#discussion_r1", body: "bug", bodyHTML: "<p>bug</p>",
+    author: { __typename: "Bot", login: "grok-pr-watcher" }, pullRequestReview: { id: "r1" } }] },
+};
+
+test("attachBotReviews fills watcher for fetched PRs and warns past the cap", async () => {
+  const pr = fakePr("PR_1", 1);
+  const repos = [fakeRepo([pr, fakePr("PR_2", 2)])];
+  const c = ctx();
+  const seen: { token: string; ids: string[]; bots: string[] }[] = [];
+  const fetcher = async (token: string, ids: string[], bots: string[]): Promise<Map<string, BotReviewRaw>> => {
+    seen.push({ token, ids, bots });
+    return new Map([["PR_1", { reviews: [rawReview], threads: [rawThread], threadTotal: 60 }]]);
+  };
+  await attachBotReviews(cfg, tokens, repos, new Map([["o", ["PR_1"]]]), c, fetcher);
+  assert.deepEqual(seen, [{ token: "token", ids: ["PR_1"], bots: ["grok-pr-watcher[bot]"] }]);
+  assert.equal(pr.watcher?.status, "open");
+  assert.deepEqual([pr.watcher?.open, pr.watcher?.total], [1, 1]);
+  assert.equal(repos[0].prs[1].watcher, null);
+  assert.equal(pr.watcherIssue, "capped");
+  assert.equal(repos[0].prs[1].watcherIssue, null);
+  assert.deepEqual(c.warnings, ["o/r#1: only the newest 50 of 60 review threads were checked."]);
+});
+
+test("attachBotReviews turns a failed fetch into a warning and leaves PRs intact", async () => {
+  const pr = fakePr("PR_1", 1);
+  const c = ctx();
+  const fetcher = async (): Promise<Map<string, BotReviewRaw>> => { throw new Error("rate limited"); };
+  await attachBotReviews(cfg, tokens, [fakeRepo([pr])], new Map([["o", ["PR_1"]]]), c, fetcher);
+  assert.equal(pr.watcher, null);
+  assert.equal(pr.watcherIssue, "unavailable");
+  assert.deepEqual(c.warnings, ["Watcher reviews unavailable for o: rate limited"]);
+});
+
+test("attachBotReviews marks a candidate the fetcher returned nothing for as unavailable", async () => {
+  const pr = fakePr("PR_1", 1);
+  const c = ctx();
+  const fetcher = async (): Promise<Map<string, BotReviewRaw>> => new Map();
+  await attachBotReviews(cfg, tokens, [fakeRepo([pr])], new Map([["o", ["PR_1"]]]), c, fetcher);
+  assert.equal(pr.watcher, null);
+  assert.equal(pr.watcherIssue, "unavailable");
+  assert.deepEqual(c.warnings, []);
+});
+
+test("ownerQuery and explicitQuery omit viewer when asked", () => {
+  assert.ok(ownerQuery(true).includes("viewer { login }"));
+  assert.ok(!/\bviewer\b/.test(ownerQuery(false)));
+  assert.ok(explicitQuery(2, true).includes("viewer { login }"));
+  assert.ok(!/\bviewer\b/.test(explicitQuery(2, false)));
+  assert.ok(ownerQuery(false).includes("repositoryOwner(login: $login)"));
+});
+
+// ---------------------------------------------------------------- collect with a stubbed fetch
+
+function ownerPage(repos: string[], hasNextPage: boolean): string {
+  return JSON.stringify({
+    data: {
+      repositoryOwner: {
+        login: "o",
+        repositories: {
+          pageInfo: { hasNextPage, endCursor: hasNextPage ? "c" : null },
+          nodes: repos.map((name) => ({
+            nameWithOwner: `o/${name}`, url: `https://github.com/o/${name}`, description: null, isPrivate: false,
+            isArchived: false, isFork: false, pushedAt: null, primaryLanguage: null,
+            pullRequests: { totalCount: 0, nodes: [] },
+          })),
+        },
+      },
+      rateLimit: { limit: 5000, remaining: 4000, resetAt: "x", cost: 50 },
+    },
+  });
+}
+
+async function withFetch<T>(pages: (string | { status: number; text: string })[], body: () => Promise<T>): Promise<{ result: T; calls: { query: string; variables: Record<string, unknown> }[] }> {
+  const real = globalThis.fetch;
+  const calls: { query: string; variables: Record<string, unknown> }[] = [];
+  let i = 0;
+  globalThis.fetch = (async (_url: unknown, init: RequestInit) => {
+    calls.push(JSON.parse(String(init.body)));
+    const page = pages[Math.min(i++, pages.length - 1)];
+    const { status, text } = typeof page === "string" ? { status: 200, text: page } : page;
+    return new Response(text, { status, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    return { result: await body(), calls };
+  } finally {
+    globalThis.fetch = real;
+  }
+}
+
+const tokenSource = { default: async () => "t", forOwner: async () => "t" };
+
+test("collect uses viewer_login and drops viewer from the queries", async () => {
+  const c = { ...DEFAULTS, mine: false, owners: ["o"], viewer_login: "len" };
+  const { result, calls } = await withFetch([ownerPage(["a"], false)], () => collect(c, tokenSource));
+  assert.equal(result.viewer, "len");
+  assert.ok(calls.every((q) => !/\bviewer\b/.test(q.query)));
+});
+
+test("collect keeps viewer in the queries when viewer_login is unset", async () => {
+  const c = { ...DEFAULTS, mine: false, owners: ["o"] };
+  const { calls } = await withFetch([ownerPage(["a"], false)], () => collect(c, tokenSource));
+  assert.ok(calls.every((q) => q.query.includes("viewer { login }")));
+});
+
+test("collect stops paginating at the request budget and warns", async () => {
+  const c = { ...DEFAULTS, mine: false, owners: ["o"], max_repos_per_source: 1000 };
+  const { result, calls } = await withFetch([ownerPage(["a"], true)], () => collect(c, tokenSource, undefined, { maxRequests: 3 }));
+  assert.equal(calls.length, 3);
+  assert.ok(result.warnings.some((w) => w.startsWith("Stopped fetching o after 3 GitHub requests")));
+  assert.equal(result.repos.length, 1); // the same repo three times, deduped
+});
+
+test("the budget also stops explicit-repo batches, not only owner pages", async () => {
+  const c = { ...DEFAULTS, mine: false, repos: ["o/a", "o/b"] };
+  const { result, calls } = await withFetch([], () => collect(c, tokenSource, undefined, { maxRequests: 0 }));
+  assert.equal(calls.length, 0);
+  assert.ok(result.warnings.some((w) => w.startsWith("Stopped fetching explicit repos after 0 GitHub requests")));
+});
+
+test("collect with includeViewer false never asks for viewer, even without viewer_login", async () => {
+  const c = { ...DEFAULTS, mine: false, owners: ["o"] };
+  const { calls } = await withFetch([ownerPage(["a"], false)], () => collect(c, tokenSource, undefined, { includeViewer: false }));
+  assert.ok(calls.length > 0);
+  assert.ok(calls.every((q) => !/\bviewer\b/.test(q.query)));
+});
+
+test("collect skips an owner whose token fails and keeps the others", async () => {
+  const c = { ...DEFAULTS, mine: false, owners: ["o", "o2"] };
+  const tokens = { default: async () => "t", forOwner: async (o: string) => { if (o === "o2") throw new Error("no installation"); return "t"; } };
+  const { result } = await withFetch([ownerPage(["a"], false)], () => collect(c, tokens));
+  assert.deepEqual(result.repos.map((r) => r.name), ["o/a"]);
+  assert.ok(result.warnings.some((w) => w.startsWith("Could not fetch o2:")));
+});
+
+test("collect throws when every source fails", async () => {
+  const c = { ...DEFAULTS, mine: false, owners: ["o", "o2"] };
+  const tokens = { default: async () => "t", forOwner: async () => { throw new Error("dead token"); } };
+  await assert.rejects(withFetch([ownerPage([], false)], () => collect(c, tokens)), /Every source failed/);
+});
+
+test("collect turns a GitHub 500 on one owner into a warning", async () => {
+  const c = { ...DEFAULTS, mine: false, owners: ["bad", "o"] };
+  const { result } = await withFetch([{ status: 500, text: "boom" }, ownerPage(["a"], false)], () => collect(c, tokenSource));
+  assert.deepEqual(result.repos.map((r) => r.name), ["o/a"]);
+  assert.ok(result.warnings.some((w) => w.startsWith("Could not fetch bad:")));
+});
