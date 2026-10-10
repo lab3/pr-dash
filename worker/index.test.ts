@@ -183,3 +183,18 @@ test("GET /api/config output can be PUT back unchanged", async () => {
   const res = await handle(req("/api/config", { method: "PUT", body: JSON.stringify(got), headers }), env, ctxOf(waits), deps);
   assert.equal(res.status, 200, await res.text());
 });
+
+test("stale allowlist keys in KV are hidden from GET, round-trip through PUT, and are gone from storage after PUT", async () => {
+  const { env, kv, waits } = setup();
+  kv.store.set("config", JSON.stringify({ owners: ["o"], viewer_login: "len", allowed_emails: ["len@bitfly.org"], allowed_domains: ["bitfly.org"] }));
+  const got = (await (await handle(req("/api/config"), env, ctxOf(waits), deps)).json()) as Record<string, unknown>;
+  assert.equal("allowed_emails" in got, false);
+  assert.equal("allowed_domains" in got, false);
+  const headers = { "content-type": "application/json", "x-pr-dash": "1", origin: `https://${HOST}` };
+  const res = await handle(req("/api/config", { method: "PUT", body: JSON.stringify(got), headers }), env, ctxOf(waits), deps);
+  assert.equal(res.status, 200, await res.text());
+  const stored = JSON.parse(kv.store.get("config") as string) as Record<string, unknown>;
+  assert.equal("allowed_emails" in stored, false);
+  assert.equal("allowed_domains" in stored, false);
+  assert.deepEqual(stored.owners, ["o"]);
+});

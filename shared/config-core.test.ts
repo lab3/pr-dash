@@ -52,3 +52,11 @@ test("publicConfig strips tokens", () => {
   assert.equal("tokens" in pub, false);
   assert.equal(pub.prs_per_repo, 50);
 });
+
+test("normalizeConfig drops keys that are not in DEFAULTS, so stale stored keys do not survive", () => {
+  const stale = { ...DEFAULTS, allowed_emails: ["a@b.c"], allowed_domains: ["b.c"] } as unknown as typeof DEFAULTS;
+  const cfg = normalizeConfig(stale) as unknown as Record<string, unknown>;
+  assert.equal("allowed_emails" in cfg, false);
+  assert.equal("allowed_domains" in cfg, false);
+  assert.deepEqual(Object.keys(cfg).sort(), Object.keys(DEFAULTS).sort());
+});

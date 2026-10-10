@@ -54,9 +54,11 @@ test("wrong audience, wrong issuer, expired, wrong key are all 403", async () =>
 test("any verified email passes, lowercased; a token without an email claim is 403", async () => {
   const ok = await verifyAccess(req(await token({ email: "Someone@Example.org" })), env(), deps);
   assert.deepEqual(ok, { ok: true, email: "someone@example.org" });
-  const bad = await verifyAccess(req(await token({ email: "" })), env(), deps);
-  assert.equal(bad.ok, false);
-  if (!bad.ok) assert.equal(bad.response.status, 403);
+  for (const email of ["", "   ", 123, null]) {
+    const bad = await verifyAccess(req(await token({ email })), env(), deps);
+    assert.equal(bad.ok, false, JSON.stringify(email));
+    if (!bad.ok) assert.equal(bad.response.status, 403);
+  }
 });
 
 test("wrong Host is 403 even with a valid token", async () => {
