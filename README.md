@@ -173,7 +173,7 @@ With no config file, it shows every repo you own, collaborate on, or can see thr
 
 pr-dash can also run as a private site on Cloudflare Workers (free plan), behind Cloudflare Access, so it's reachable from any device without a laptop running `node server.ts`. A Worker cron rebuilds the dashboard data every 5 minutes and stores it in KV; the page loads from that. Design: `docs/specs/cloudflare-hosting.md`.
 
-What's in the repo is generic. The hostname, Cloudflare account, KV namespace, Access team and AUD come from the GitHub `production` environment secrets at deploy time, and the org list, allowed emails and GitHub App installation ids live only in KV.
+What's in the repo is generic. The hostname, Cloudflare account, KV namespace, Access team and AUD come from the GitHub `production` environment secrets at deploy time, and the org list, allowed emails and domains, and GitHub App installation ids live only in KV.
 
 One-time setup (your machine):
 1. Create a read-only GitHub App (Metadata, Pull requests, Checks, Commit statuses: read) owned by your org and install it on every org you want to see. Note the App id and each installation id (Settings → Installations → the number in the URL).
@@ -181,7 +181,7 @@ One-time setup (your machine):
 3. Create the Access application for the hostname in Zero Trust (self-hosted, your identity provider, your email in the policy). Note its AUD (64 hex characters) and your team domain (`https://<team>.cloudflareaccess.com`, no trailing slash).
 4. `npx wrangler kv namespace create PRDASH`; note the id.
 5. Export the five values locally and render the config: `CF_ACCOUNT_ID=… PRDASH_HOSTNAME=… PRDASH_KV_ID=… ACCESS_TEAM_DOMAIN=… ACCESS_AUD=… node scripts/render-wrangler.mjs`, then `npx wrangler secret put GH_APP_ID --config wrangler.deploy.json` and `npx wrangler secret put GH_APP_PRIVATE_KEY --config wrangler.deploy.json < app-key.p8`.
-6. Write `config.hosted.json` (gitignored): `owners`, `allowed_emails`, `viewer_login` (your GitHub login; required, since an App token can't answer `viewer`), `tokens` as `{"default": "app:<installation id>", "other-org": "app:<id>"}` — set `default` so a view that names an org without its own entry degrades to a warning instead of failing. Then `node scripts/seed-kv.mjs config.hosted.json [views.json]` (the views file is optional).
+6. Write `config.hosted.json` (gitignored): `owners`, `allowed_emails` and/or `allowed_domains` (a domain such as `"example.org"` lets every address on it in; Cloudflare Access must also admit those users), `viewer_login` (your GitHub login; required, since an App token can't answer `viewer`), `tokens` as `{"default": "app:<installation id>", "other-org": "app:<id>"}` — set `default` so a view that names an org without its own entry degrades to a warning instead of failing. Then `node scripts/seed-kv.mjs config.hosted.json [views.json]` (the views file is optional).
 7. Create a Cloudflare API token scoped to Workers Scripts: Edit and Workers Routes: Edit for the zone. In the GitHub repo create the `production` environment with deployment branches limited to `main` and **no required reviewers** (the hourly probe runs through it and would otherwise wait for approval). Add environment secrets `CLOUDFLARE_API_TOKEN`, `CF_ACCOUNT_ID`, `PRDASH_HOSTNAME`, `PRDASH_KV_ID`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` (secrets, so they're masked in the public logs).
 8. Push to `main`. The deploy job renders the config, deploys, and checks that signed-out requests redirect to your Access application (team domain and AUD pinned). Sign in and confirm the page. In the Cloudflare dashboard, Workers Logs (observability is on) should show the cron every 5 minutes with `cpuTime` under 10 ms, and the rows should show real `mergeable` states rather than a permanent "merge check pending".
 
@@ -199,7 +199,7 @@ npx --no-install wrangler dev --config wrangler.deploy.json --test-scheduled
 
 `npm run dev:worker` overwrites `wrangler.deploy.json` with dev values, so re-render with the five real values before `seed-kv` or `secret put`.
 
-Hosted differences: `mine` is ignored (list orgs in `owners`); `viewer_login` fills "yours" and "needs your review"; the footer says "no fresh data for 10+ min" if the data is older than 10 minutes; `PUT /api/config` is available behind Access and refuses a config that would drop your own email.
+Hosted differences: `mine` is ignored (list orgs in `owners`); `viewer_login` fills "yours" and "needs your review"; the footer says "no fresh data for 10+ min" if the data is older than 10 minutes; `PUT /api/config` is available behind Access and refuses a config that would drop your own email (listed directly or through its domain).
 
 ## Auth
 

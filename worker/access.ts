@@ -1,8 +1,9 @@
 // Fail-closed gate in front of everything the Worker serves, assets included. Cloudflare Access
 // adds a signed JWT to every request in Cf-Access-Jwt-Assertion; we verify it against the team's
 // public keys, pin the audience to this application, and require the email to be on the
-// allowlist from KV config.
+// allowlist from KV config (listed emails, or any address on a listed domain).
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
+import { emailAllowed, type Allowlist } from "../shared/config-core.ts";
 import type { Env } from "./env.ts";
 
 export type AccessResult = { ok: true; email: string } | { ok: false; response: Response };
@@ -38,7 +39,7 @@ export function isLocalHost(host: string): boolean {
 }
 
 export async function verifyAccess(
-  request: Request, env: Env, allowedEmails: string[], deps: AccessDeps = defaultDeps,
+  request: Request, env: Env, allow: Allowlist, deps: AccessDeps = defaultDeps,
 ): Promise<AccessResult> {
   const host = request.headers.get("host") ?? new URL(request.url).host;
 
@@ -67,7 +68,7 @@ export async function verifyAccess(
   } catch {
     return { ok: false, response: deny("Access token could not be verified.") };
   }
-  if (!email || !allowedEmails.includes(email)) {
+  if (!emailAllowed(email, allow)) {
     return { ok: false, response: deny("This account is not allowed to view this site.") };
   }
   return { ok: true, email };

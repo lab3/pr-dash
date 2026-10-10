@@ -30,6 +30,8 @@ export interface Config {
   viewer_login: string | null;
   /** Hosted only: emails allowed through Cloudflare Access, lowercase. */
   allowed_emails: string[];
+  /** Hosted only: email domains whose every address is allowed, lowercase, no "@". */
+  allowed_domains: string[];
 }
 
 export const DEFAULTS: Config = {
@@ -50,6 +52,7 @@ export const DEFAULTS: Config = {
   bot_reviewers: ["grok-pr-watcher[bot]"],
   viewer_login: null,
   allowed_emails: [],
+  allowed_domains: [],
 };
 
 export class DashError extends Error {
@@ -97,11 +100,22 @@ export function normalizeConfig(cfg: Config): Config {
   const login = typeof cfg.viewer_login === "string" ? cfg.viewer_login.trim() : "";
   out.viewer_login = login || null;
   out.allowed_emails = strings(cfg.allowed_emails).map((e) => e.toLowerCase());
+  out.allowed_domains = strings(cfg.allowed_domains).map((d) => d.toLowerCase().replace(/^@/, "")).filter(Boolean);
   return out;
 }
 
-/** The config the browser or an admin may see: no token specs, no email allowlist. */
-export function publicConfig(cfg: Config): Omit<Config, "tokens" | "allowed_emails"> {
-  const { tokens: _t, allowed_emails: _e, ...rest } = cfg;
+/** The config the browser or an admin may see: no token specs, no email or domain allowlist. */
+export function publicConfig(cfg: Config): Omit<Config, "tokens" | "allowed_emails" | "allowed_domains"> {
+  const { tokens: _t, allowed_emails: _e, allowed_domains: _d, ...rest } = cfg;
   return rest;
+}
+
+export type Allowlist = Pick<Config, "allowed_emails" | "allowed_domains">;
+
+/** A verified, lowercase email is allowed when it is listed, or its domain (the part after the last "@") is listed. */
+export function emailAllowed(email: string, allow: Allowlist): boolean {
+  if (!email) return false;
+  if (allow.allowed_emails.includes(email)) return true;
+  const at = email.lastIndexOf("@");
+  return at > 0 && allow.allowed_domains.includes(email.slice(at + 1));
 }

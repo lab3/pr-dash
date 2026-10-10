@@ -24,7 +24,7 @@ const env = (over: Partial<Env> = {}): Env =>
 const req = (jwt: string | null, host = "pr.example.test"): Request =>
   new Request(`https://${host}/`, { headers: jwt ? { "cf-access-jwt-assertion": jwt, host } : { host } });
 
-const allowed = ["you@example.org"];
+const allowed = { allowed_emails: ["you@example.org"], allowed_domains: [] as string[] };
 
 test("valid token for an allowed email passes", async () => {
   const r = await verifyAccess(req(await token({})), env(), allowed, deps);
@@ -58,6 +58,15 @@ test("email not in the allowlist is 403; comparison is case-insensitive", async 
   assert.equal(bad.ok, false);
   const ok = await verifyAccess(req(await token({ email: "You@Example.org" })), env(), allowed, deps);
   assert.equal(ok.ok, true);
+});
+
+test("any email on an allowed domain passes; other domains are 403", async () => {
+  const allow = { allowed_emails: [] as string[], allowed_domains: ["bitfly.org"] };
+  const ok = await verifyAccess(req(await token({ email: "Anyone@Bitfly.org" })), env(), allow, deps);
+  assert.deepEqual(ok, { ok: true, email: "anyone@bitfly.org" });
+  const bad = await verifyAccess(req(await token({ email: "anyone@example.org" })), env(), allow, deps);
+  assert.equal(bad.ok, false);
+  if (!bad.ok) assert.equal(bad.response.status, 403);
 });
 
 test("wrong Host is 403 even with a valid token", async () => {

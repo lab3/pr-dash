@@ -149,6 +149,20 @@ test("GET /api/config strips secrets; PUT refuses to drop the caller's email", a
   assert.deepEqual(after.owners, ["o", "p"]);
 });
 
+test("PUT /api/config accepts allowed_domains and counts the caller's own domain as keeping access", async () => {
+  const { env, kv, waits } = setup();
+  const headers = { "content-type": "application/json", "x-pr-dash": "1", origin: `https://${HOST}` };
+  const res = await handle(req("/api/config", { method: "PUT", body: JSON.stringify({ owners: ["o"], allowed_emails: [], allowed_domains: ["@Example.org"] }), headers }), env, ctxOf(waits), deps);
+  assert.equal(res.status, 200);
+  const stored = JSON.parse(kv.store.get("config")!) as Record<string, unknown>;
+  assert.deepEqual(stored.allowed_domains, ["example.org"]);
+  assert.deepEqual(stored.allowed_emails, []);
+  const got = (await (await handle(req("/api/config"), env, ctxOf(waits), deps)).json()) as Record<string, unknown>;
+  assert.equal("allowed_domains" in got, false);
+  // The caller is still allowed through the domain, so the next request is not a 403.
+  assert.equal((await handle(req("/api/config"), env, ctxOf(waits), deps)).status, 200);
+});
+
 test("PUT /api/config merges over the stored config, so tokens survive", async () => {
   const { env, kv, waits } = setup();
   kv.store.set("config", JSON.stringify({ owners: ["o"], allowed_emails: ["you@example.org"], viewer_login: "len", tokens: { o: "app:5" } }));

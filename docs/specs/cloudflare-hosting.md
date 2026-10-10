@@ -82,7 +82,7 @@ Shipped in PR #2 and reused as is:
 |---|---|
 | `GET /api/prs[?refresh=1]` | The stored `DashboardData`. With `refresh=1`, rerun `collect()` first unless the stored data is under 60 seconds old. Same shape as today, so the browser doesn't change. |
 | `GET /api/views`, `PUT /api/views` | As today (`validateViews()`, `X-PR-Dash: 1`, JSON body, Origin must equal `https://<host>`), stored in the KV key `views`. A `PUT` that adds a new owner or repo marks the data stale, as `server.ts` does today. |
-| `GET /api/config`, `PUT /api/config` | Admin: read and replace the hosted config. Response never includes `tokens` (installation ids) or `allowed_emails`. `PUT` validated with `normalizeConfig()`, behind `assertWritable`. |
+| `GET /api/config`, `PUT /api/config` | Admin: read and replace the hosted config. Response never includes `tokens` (installation ids), `allowed_emails` or `allowed_domains`. `PUT` validated with `normalizeConfig()`, behind `assertWritable`. |
 | `GET /api/health` | `{ok:true}`. |
 - Local `server.ts` keeps serving the same routes from `config.json` and `views.json`, with its in-memory cache in place of KV.
 
@@ -103,7 +103,7 @@ Shipped in PR #2 and reused as is:
 - **The Worker verifies `Cf-Access-Jwt-Assertion` on every request,** as bedrock's `site/src/worker.js` does:
   - `jose` `createRemoteJWKSet(new URL(`${ACCESS_TEAM_DOMAIN}/cdn-cgi/access/certs`))`, cached per isolate, refetches on an unknown `kid`
   - `jwtVerify` with `issuer: ACCESS_TEAM_DOMAIN`, `audience: ACCESS_AUD`; `exp` and `nbf` enforced by `jose`
-  - `email` from the **verified** claims must be in the KV config `allowed_emails` (exact, lowercase)
+  - `email` from the **verified** claims must be in the KV config `allowed_emails` (exact, lowercase), or its domain (after the last `@`) must be in `allowed_domains`
   - `Host` must equal the configured hostname
   - otherwise `403`, one-line text body, `cache-control: no-store`
   - missing `ACCESS_TEAM_DOMAIN` or `ACCESS_AUD` → 500 "not configured", as bedrock does, so a misdeploy fails closed
@@ -145,7 +145,7 @@ Shipped in PR #2 and reused as is:
 ## Testing
 `node --test`, TypeScript run directly:
 - **Shared:** the existing `botreviews`, `sanitize`, `config` and `github` suites pass from their new paths. New: `includeViewer: false` omits `viewer` from every query; `shapePr` uses the passed login; the subrequest budget stops paginating and warns.
-- **Access:** valid token; wrong `aud`; wrong `iss`; expired; unknown `kid` (refetches keys); email not in `allowed_emails`; missing header → 403 on an API path and an asset path; dev bypass refused when `ACCESS_AUD` is set or the host isn't local; missing variables → 500.
+- **Access:** valid token; wrong `aud`; wrong `iss`; expired; unknown `kid` (refetches keys); email not in `allowed_emails` and not on an `allowed_domains` domain; missing header → 403 on an API path and an asset path; dev bypass refused when `ACCESS_AUD` is set or the host isn't local; missing variables → 500.
 - **Worker API:** `/api/prs` serves the KV value; `?refresh=1` reruns only when older than 60 s; `/api/config` never contains `tokens` or `allowed_emails`; `PUT` without the header, wrong Origin, or invalid data → 4xx; a `PUT /api/views` naming a new owner marks the data stale.
 - **Cron:** with a stubbed `fetch`, the handler writes `prs` once with `generatedAt`; a failing owner yields warnings plus data for the rest; a thrown `collect()` leaves the old value. Run through `wrangler dev`'s `/cdn-cgi/local/scheduled?cron=*/5+*+*+*+*`.
 - **App tokens:** JWT claims; isolate cache hit and expiry; one mint per org per isolate.

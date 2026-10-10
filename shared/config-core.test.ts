@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEFAULTS, normalizeConfig, publicConfig } from "./config-core.ts";
+import { DEFAULTS, emailAllowed, normalizeConfig, publicConfig } from "./config-core.ts";
 
 test("bot review defaults", () => {
   assert.equal(DEFAULTS.bot_reviews, true);
@@ -57,4 +57,25 @@ test("publicConfig strips tokens and allowed_emails", () => {
   assert.equal("tokens" in pub, false);
   assert.equal("allowed_emails" in pub, false);
   assert.equal(pub.prs_per_repo, 50);
+});
+
+test("allowed_domains defaults to empty and is normalized like emails", () => {
+  assert.deepEqual(DEFAULTS.allowed_domains, []);
+  const cfg = normalizeConfig({ ...DEFAULTS, allowed_domains: [" @Bitfly.org ", "", "example.org"] });
+  assert.deepEqual(cfg.allowed_domains, ["bitfly.org", "example.org"]);
+});
+
+test("publicConfig strips allowed_domains", () => {
+  const pub = publicConfig({ ...DEFAULTS, allowed_domains: ["bitfly.org"] }) as Record<string, unknown>;
+  assert.equal("allowed_domains" in pub, false);
+});
+
+test("emailAllowed accepts a listed email or a listed domain, nothing else", () => {
+  const allow = { allowed_emails: ["len@bitfly.org"], allowed_domains: ["example.org"] };
+  assert.equal(emailAllowed("len@bitfly.org", allow), true);
+  assert.equal(emailAllowed("anyone@example.org", allow), true);
+  assert.equal(emailAllowed("other@bitfly.org", allow), false);
+  assert.equal(emailAllowed("x@sub.example.org", allow), false, "subdomains are not the domain");
+  assert.equal(emailAllowed("x@example.org.evil", allow), false);
+  assert.equal(emailAllowed("", allow), false);
 });
