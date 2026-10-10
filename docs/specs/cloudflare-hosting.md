@@ -82,7 +82,7 @@ Shipped in PR #2 and reused as is:
 |---|---|
 | `GET /api/prs[?refresh=1]` | The stored `DashboardData`. With `refresh=1`, rerun `collect()` first unless the stored data is under 60 seconds old. Same shape as today, so the browser doesn't change. |
 | `GET /api/views`, `PUT /api/views` | As today (`validateViews()`, `X-PR-Dash: 1`, JSON body, Origin must equal `https://<host>`), stored in the KV key `views`. A `PUT` that adds a new owner or repo marks the data stale, as `server.ts` does today. |
-| `GET /api/config`, `PUT /api/config` | Admin: read and replace the hosted config. Response never includes `tokens` (installation ids) or `allowed_emails`. `PUT` validated with `normalizeConfig()`, behind `assertWritable`. |
+| `GET /api/config`, `PUT /api/config` | Admin: read and replace the hosted config. Response never includes `tokens` (installation ids). `PUT` validated with `normalizeConfig()`, behind `assertWritable`. |
 | `GET /api/health` | `{ok:true}`. |
 - Local `server.ts` keeps serving the same routes from `config.json` and `views.json`, with its in-memory cache in place of KV.
 
@@ -103,7 +103,7 @@ Shipped in PR #2 and reused as is:
 - **The Worker verifies `Cf-Access-Jwt-Assertion` on every request,** as bedrock's `site/src/worker.js` does:
   - `jose` `createRemoteJWKSet(new URL(`${ACCESS_TEAM_DOMAIN}/cdn-cgi/access/certs`))`, cached per isolate, refetches on an unknown `kid`
   - `jwtVerify` with `issuer: ACCESS_TEAM_DOMAIN`, `audience: ACCESS_AUD`; `exp` and `nbf` enforced by `jose`
-  - `email` from the **verified** claims must be in the KV config `allowed_emails` (exact, lowercase)
+  - `email` from the **verified** claims must be present (lowercased for use). Who may sign in is the Access policy's decision alone; the Worker keeps no allowlist of its own, so there is one place to edit.
   - `Host` must equal the configured hostname
   - otherwise `403`, one-line text body, `cache-control: no-store`
   - missing `ACCESS_TEAM_DOMAIN` or `ACCESS_AUD` → 500 "not configured", as bedrock does, so a misdeploy fails closed
@@ -117,7 +117,7 @@ Shipped in PR #2 and reused as is:
 - **Data at rest:** the KV `prs` value holds PR titles, branches and Watcher review text for every org. KV is account-private; only the Worker reads it, behind Access. No browser-side persistence beyond the page.
 
 ## Config and views
-- **Config:** KV key `config`, same keys as `config.json` plus `allowed_emails`, `viewer_login`, and `tokens` in the `app:<installation id>` form.
+- **Config:** KV key `config`, same keys as `config.json` plus `viewer_login`, and `tokens` in the `app:<installation id>` form.
 - **Seeding and admin:** `node scripts/seed-kv.mjs config.hosted.json [views.json]` validates with the shared code, then `wrangler kv key put --remote`. Day-to-day changes via `PUT /api/config` behind Access. Views keep the in-app editor.
 
 ## GitHub App ("pr-dash reader")
@@ -138,15 +138,15 @@ Shipped in PR #2 and reused as is:
 ## Migration steps
 1. **Move the pure code to `shared/`** (`github.ts`, `botreviews.ts`, `sanitize.ts`, `config-core.ts`, `views-core.ts`), add `includeViewer` to the query builder and the subrequest budget to `collect()`, update imports and tests. `server.ts` behaves exactly as today; `npm test` passes.
 2. **Worker.** `worker/` (fetch handler, scheduled handler, access, github-app, kv), `wrangler.json` with placeholders, `scripts/build.mjs` (esbuild `static/` → `dist/`), `seed-kv.mjs`, `check-config.mjs`, `check-access.mjs`, the footer "cron not running" line. Run `wrangler dev --remote` against real data: `cpuTime` per request and per cron run, `mergeable` populated through the App token, the redirect check against a dev Access app or skipped locally.
-3. **Len's one-time setup:** create the GitHub App and install it on the four orgs; create the KV namespace; `wrangler secret put` the App key and id; create the Access application for `pr-dash.workarea.io` and note its AUD; create the Workers-scoped CF API token; create the GitHub `production` environment with its variables and secrets; seed KV from `config.hosted.json` (owners, `allowed_emails: ["len@bitfly.org"]`, `viewer_login`, installation ids).
+3. **Len's one-time setup:** create the GitHub App and install it on the four orgs; create the KV namespace; `wrangler secret put` the App key and id; create the Access application for `pr-dash.workarea.io` and note its AUD; create the Workers-scoped CF API token; create the GitHub `production` environment with its variables and secrets; seed KV from `config.hosted.json` (owners, `viewer_login`, installation ids).
 4. Merge to main, deploy, watch the redirect check pass, sign in and confirm the page. Confirm in Workers Logs that the cron runs every 5 minutes and `cpuTime` stays under 10 ms.
 5. Local stays first-class. The two modes don't share views or config unless Len copies them.
 
 ## Testing
 `node --test`, TypeScript run directly:
 - **Shared:** the existing `botreviews`, `sanitize`, `config` and `github` suites pass from their new paths. New: `includeViewer: false` omits `viewer` from every query; `shapePr` uses the passed login; the subrequest budget stops paginating and warns.
-- **Access:** valid token; wrong `aud`; wrong `iss`; expired; unknown `kid` (refetches keys); email not in `allowed_emails`; missing header → 403 on an API path and an asset path; dev bypass refused when `ACCESS_AUD` is set or the host isn't local; missing variables → 500.
-- **Worker API:** `/api/prs` serves the KV value; `?refresh=1` reruns only when older than 60 s; `/api/config` never contains `tokens` or `allowed_emails`; `PUT` without the header, wrong Origin, or invalid data → 4xx; a `PUT /api/views` naming a new owner marks the data stale.
+- **Access:** valid token; wrong `aud`; wrong `iss`; expired; unknown `kid` (refetches keys); token without an email claim; missing header → 403 on an API path and an asset path; dev bypass refused when `ACCESS_AUD` is set or the host isn't local; missing variables → 500.
+- **Worker API:** `/api/prs` serves the KV value; `?refresh=1` reruns only when older than 60 s; `/api/config` never contains `tokens`; `PUT` without the header, wrong Origin, or invalid data → 4xx; a `PUT /api/views` naming a new owner marks the data stale.
 - **Cron:** with a stubbed `fetch`, the handler writes `prs` once with `generatedAt`; a failing owner yields warnings plus data for the rest; a thrown `collect()` leaves the old value. Run through `wrangler dev`'s `/cdn-cgi/local/scheduled?cron=*/5+*+*+*+*`.
 - **App tokens:** JWT claims; isolate cache hit and expiry; one mint per org per isolate.
 - **Build and config checks:** `dist/` has `app.js` and `_headers` with the CSP; `check-config` rejects `workers_dev`, `preview_urls`, a missing domain, a missing cron, leftover placeholders; `check-access` handles a wrong `kid` and a redirect to another application.

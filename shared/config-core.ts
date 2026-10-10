@@ -28,8 +28,6 @@ export interface Config {
   bot_reviewers: string[];
   /** GitHub login used for "yours" and "needs your review" when the token can't answer `viewer`. */
   viewer_login: string | null;
-  /** Hosted only: emails allowed through Cloudflare Access, lowercase. */
-  allowed_emails: string[];
 }
 
 export const DEFAULTS: Config = {
@@ -49,7 +47,6 @@ export const DEFAULTS: Config = {
   bot_reviews: true,
   bot_reviewers: ["grok-pr-watcher[bot]"],
   viewer_login: null,
-  allowed_emails: [],
 };
 
 export class DashError extends Error {
@@ -96,12 +93,11 @@ export function normalizeConfig(cfg: Config): Config {
   out.bot_reviewers = Array.isArray(cfg.bot_reviewers) ? strings(cfg.bot_reviewers) : DEFAULTS.bot_reviewers;
   const login = typeof cfg.viewer_login === "string" ? cfg.viewer_login.trim() : "";
   out.viewer_login = login || null;
-  out.allowed_emails = strings(cfg.allowed_emails).map((e) => e.toLowerCase());
   return out;
 }
 
-/** The config the browser or an admin may see: no token specs, no email allowlist. */
-export function publicConfig(cfg: Config): Omit<Config, "tokens" | "allowed_emails"> {
-  const { tokens: _t, allowed_emails: _e, ...rest } = cfg;
+/** The config the browser or an admin may see: no token specs. */
+export function publicConfig(cfg: Config): Omit<Config, "tokens"> {
+  const { tokens: _t, ...rest } = cfg;
   return rest;
 }

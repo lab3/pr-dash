@@ -31,11 +31,11 @@ const deps = (c: typeof collect) => ({ collect: c, tokens: () => ({ default: asy
 
 test("readConfig merges KV over defaults, normalizes, and forces mine off", async () => {
   const kv = new MemoryKV();
-  kv.store.set("config", JSON.stringify({ mine: true, owners: ["O"], allowed_emails: ["A@B.C"], viewer_login: "len" }));
+  kv.store.set("config", JSON.stringify({ mine: true, owners: ["O"], viewer_login: " len " }));
   const cfg = await readConfig(kv as unknown as KVNamespace);
   assert.equal(cfg.mine, false);
   assert.deepEqual(cfg.owners, ["O"]);
-  assert.deepEqual(cfg.allowed_emails, ["a@b.c"]);
+  assert.equal(cfg.viewer_login, "len");
   assert.equal(cfg.prs_per_repo, DEFAULTS.prs_per_repo);
 });
 

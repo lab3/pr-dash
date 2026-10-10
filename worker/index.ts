@@ -55,7 +55,7 @@ async function readJson(request: Request, limit = 256 * 1024): Promise<unknown> 
   }
 }
 
-const ARRAY_KEYS = ["owners", "repos", "exclude", "bot_reviewers", "allowed_emails"];
+const ARRAY_KEYS = ["owners", "repos", "exclude", "bot_reviewers"];
 /** `port` and `host` are local-server settings; hosted mode neither shows nor accepts them. */
 const NUMBER_KEYS = ["max_repos_per_source", "prs_per_repo", "cache_seconds", "refresh_seconds"] as const;
 const BOOLEAN_KEYS = ["mine", "include_archived", "include_forks", "bot_reviews"];
@@ -91,7 +91,7 @@ const logBackground = (e: unknown): void => {
   console.error(`pr-dash: background refresh failed: ${(e as Error).message ?? e}`);
 };
 
-async function api(request: Request, url: URL, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }, email: string, refresh: RefreshDeps | undefined): Promise<Response> {
+async function api(request: Request, url: URL, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }, refresh: RefreshDeps | undefined): Promise<Response> {
   const kv = env.PRDASH;
   const run = () => runRefresh(env, refresh);
 
@@ -136,9 +136,6 @@ async function api(request: Request, url: URL, env: Env, ctx: { waitUntil(p: Pro
     const stored = ((await kv.get("config", "json")) ?? {}) as Partial<Config>;
     const cfg: Config = normalizeConfig({ ...DEFAULTS, ...stored, ...(body as Partial<Config>) });
     cfg.mine = false; // hosted mode ignores `mine`; keep it off in storage
-    if (!cfg.allowed_emails.includes(email)) {
-      throw new DashError("allowed_emails must include your own email, or you would lock yourself out.", null, 400);
-    }
     await kv.put("config", JSON.stringify(cfg));
     ctx.waitUntil(run().catch(logBackground));
     return json(200, hostedPublicConfig(cfg));
@@ -150,18 +147,13 @@ async function api(request: Request, url: URL, env: Env, ctx: { waitUntil(p: Pro
 export async function handle(
   request: Request, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }, deps: HandlerDeps = {},
 ): Promise<Response> {
-  // Read the allowlist before verifying, so one KV read serves both the gate and the routes.
-  const cfg = await readConfig(env.PRDASH).catch((e: unknown) => {
-    console.error(`pr-dash: config unreadable, denying all requests: ${(e as Error).message ?? e}`);
-    return { ...DEFAULTS, allowed_emails: [] as string[] };
-  });
-  const access = await verifyAccess(request, env, cfg.allowed_emails, deps.access);
+  const access = await verifyAccess(request, env, deps.access);
   if (!access.ok) return withHeaders(access.response);
 
   const url = new URL(request.url);
   if (url.pathname.startsWith("/api/")) {
     try {
-      return await api(request, url, env, ctx, access.email, deps.refresh);
+      return await api(request, url, env, ctx, deps.refresh);
     } catch (e) {
       if (e instanceof DashError) return json(e.status, { error: e.message, hint: e.hint });
       return json(500, { error: `Unexpected error: ${(e as Error).message ?? e}` });
