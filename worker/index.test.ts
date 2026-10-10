@@ -39,7 +39,7 @@ const deps = {
 
 function setup(): { env: Env; kv: MemoryKV; waits: Promise<unknown>[] } {
   const kv = new MemoryKV();
-  kv.store.set("config", JSON.stringify({ owners: ["o"], allowed_emails: ["you@example.org"], viewer_login: "len" }));
+  kv.store.set("config", JSON.stringify({ owners: ["o"], viewer_login: "len" }));
   const env = { PRDASH: kv, ASSETS: { fetch: async (r: Request) => new Response(`asset:${new URL(r.url).pathname}`, { headers: { "content-type": "text/css" } }) },
     ACCESS_TEAM_DOMAIN: TEAM, ACCESS_AUD: AUD, HOSTNAME: HOST } as unknown as Env;
   return { env, kv, waits: [] };
@@ -129,19 +129,18 @@ test("views round-trip; a new owner triggers a background refresh; writes need t
   assert.equal(wrongOrigin.status, 403);
 });
 
-test("GET /api/config strips secrets; PUT refuses to drop the caller's email", async () => {
+test("GET /api/config strips secrets; PUT stores and refreshes; the old allowlist key is unknown", async () => {
   const { env, waits } = setup();
   collectCalls = 0;
   const got = (await (await handle(req("/api/config"), env, ctxOf(waits), deps)).json()) as Record<string, unknown>;
   assert.equal("tokens" in got, false);
-  assert.equal("allowed_emails" in got, false);
   assert.equal("host" in got, false, "local-server fields are not shown in hosted mode");
   assert.equal("port" in got, false);
   assert.deepEqual(got.owners, ["o"]);
   const headers = { "content-type": "application/json", "x-pr-dash": "1", origin: `https://${HOST}` };
-  const lockout = await handle(req("/api/config", { method: "PUT", body: JSON.stringify({ owners: ["o"], allowed_emails: ["other@x.y"] }), headers }), env, ctxOf(waits), deps);
-  assert.equal(lockout.status, 400);
-  const ok = await handle(req("/api/config", { method: "PUT", body: JSON.stringify({ owners: ["o", "p"], allowed_emails: ["you@example.org"] }), headers }), env, ctxOf(waits), deps);
+  const stale = await handle(req("/api/config", { method: "PUT", body: JSON.stringify({ owners: ["o"], allowed_emails: ["other@x.y"] }), headers }), env, ctxOf(waits), deps);
+  assert.equal(stale.status, 400, "allowed_emails is no longer a config key");
+  const ok = await handle(req("/api/config", { method: "PUT", body: JSON.stringify({ owners: ["o", "p"] }), headers }), env, ctxOf(waits), deps);
   assert.equal(ok.status, 200);
   await Promise.all(waits);
   assert.equal(collectCalls, 1, "config PUT triggers a refresh");
@@ -151,9 +150,9 @@ test("GET /api/config strips secrets; PUT refuses to drop the caller's email", a
 
 test("PUT /api/config merges over the stored config, so tokens survive", async () => {
   const { env, kv, waits } = setup();
-  kv.store.set("config", JSON.stringify({ owners: ["o"], allowed_emails: ["you@example.org"], viewer_login: "len", tokens: { o: "app:5" } }));
+  kv.store.set("config", JSON.stringify({ owners: ["o"], viewer_login: "len", tokens: { o: "app:5" } }));
   const headers = { "content-type": "application/json", "x-pr-dash": "1", origin: `https://${HOST}` };
-  const res = await handle(req("/api/config", { method: "PUT", body: JSON.stringify({ owners: ["o", "p"], allowed_emails: ["you@example.org"] }), headers }), env, ctxOf(waits), deps);
+  const res = await handle(req("/api/config", { method: "PUT", body: JSON.stringify({ owners: ["o", "p"] }), headers }), env, ctxOf(waits), deps);
   assert.equal(res.status, 200);
   await Promise.all(waits);
   const stored = JSON.parse(kv.store.get("config") as string) as { tokens: unknown; owners: unknown };
@@ -169,11 +168,11 @@ test("PUT /api/config rejects wrong types, unknown keys and raw tokens", async (
   const put = (body: unknown) => handle(req("/api/config", { method: "PUT", body: JSON.stringify(body), headers }), env, ctxOf(waits), deps);
   for (const bad of [{ owners: "my-org" }, { exclude: "x" }, { tokens: { o: "ghp_raw" } }, { refresh_seconds: "5" }, { viewer_login: 5 }, { bogus: 1 },
     { refresh_seconds: 1 }, { refresh_seconds: 300.5 }, { cache_seconds: 99_999 }, { prs_per_repo: 0 }, { port: 8787 }, { host: "x" }]) {
-    const res = await put({ allowed_emails: ["you@example.org"], ...bad });
+    const res = await put(bad);
     assert.equal(res.status, 400, JSON.stringify(bad));
   }
   assert.equal(kv.store.get("config"), before);
-  const ok = await put({ owners: ["o"], allowed_emails: ["you@example.org"], tokens: { o: "app:5", d: "secret:GH_TOKEN" }, refresh_seconds: 120 });
+  const ok = await put({ owners: ["o"], tokens: { o: "app:5", d: "secret:GH_TOKEN" }, refresh_seconds: 120 });
   assert.equal(ok.status, 200);
 });
 
@@ -181,6 +180,6 @@ test("GET /api/config output can be PUT back unchanged", async () => {
   const { env, waits } = setup();
   const got = (await (await handle(req("/api/config"), env, ctxOf(waits), deps)).json()) as Record<string, unknown>;
   const headers = { "content-type": "application/json", "x-pr-dash": "1", origin: `https://${HOST}` };
-  const res = await handle(req("/api/config", { method: "PUT", body: JSON.stringify({ ...got, allowed_emails: ["you@example.org"] }), headers }), env, ctxOf(waits), deps);
+  const res = await handle(req("/api/config", { method: "PUT", body: JSON.stringify(got), headers }), env, ctxOf(waits), deps);
   assert.equal(res.status, 200, await res.text());
 });

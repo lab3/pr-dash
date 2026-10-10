@@ -37,14 +37,9 @@ test("normalizeConfig still clamps prs_per_repo", () => {
   assert.equal(normalizeConfig({ ...DEFAULTS, prs_per_repo: -5 }).prs_per_repo, 1);
 });
 
-test("new hosted keys default to empty", () => {
+test("hosted keys default to empty and no allowlist key exists", () => {
   assert.equal(DEFAULTS.viewer_login, null);
-  assert.deepEqual(DEFAULTS.allowed_emails, []);
-});
-
-test("normalizeConfig lowercases and trims allowed_emails and drops blanks", () => {
-  const cfg = normalizeConfig({ ...DEFAULTS, allowed_emails: [" Len@Example.org ", ""] });
-  assert.deepEqual(cfg.allowed_emails, ["len@example.org"]);
+  assert.equal("allowed_emails" in DEFAULTS, false);
 });
 
 test("normalizeConfig turns a blank viewer_login into null", () => {
@@ -52,9 +47,8 @@ test("normalizeConfig turns a blank viewer_login into null", () => {
   assert.equal(normalizeConfig({ ...DEFAULTS, viewer_login: " len " }).viewer_login, "len");
 });
 
-test("publicConfig strips tokens and allowed_emails", () => {
-  const pub = publicConfig({ ...DEFAULTS, tokens: { default: "gh" }, allowed_emails: ["a@b.c"] }) as Record<string, unknown>;
+test("publicConfig strips tokens", () => {
+  const pub = publicConfig({ ...DEFAULTS, tokens: { default: "gh" } }) as Record<string, unknown>;
   assert.equal("tokens" in pub, false);
-  assert.equal("allowed_emails" in pub, false);
   assert.equal(pub.prs_per_repo, 50);
 });

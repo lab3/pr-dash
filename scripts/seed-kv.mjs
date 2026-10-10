@@ -16,7 +16,6 @@ if (!configFile) {
 }
 
 const cfg = normalizeConfig({ ...DEFAULTS, ...JSON.parse(await readFile(configFile, "utf8")) });
-if (!cfg.allowed_emails.length) throw new Error("config.hosted.json needs at least one allowed_emails entry.");
 if (!cfg.owners.length && !cfg.repos.length) throw new Error("config.hosted.json needs owners or repos (mine is ignored hosted).");
 cfg.mine = false; // hosted mode ignores `mine`; keep it off in storage
 for (const [owner, spec] of Object.entries(cfg.tokens)) {
