@@ -87,7 +87,8 @@ function clamp(key: keyof typeof NUMBER_BOUNDS, value: unknown): number {
 }
 
 export function normalizeConfig(cfg: Config): Config {
-  const out = { ...cfg };
+  // Keep only known keys, so a key removed from Config does not linger in stored (KV) data.
+  const out = Object.fromEntries(Object.entries(cfg).filter(([k]) => k in DEFAULTS)) as Config;
   for (const key of Object.keys(NUMBER_BOUNDS) as (keyof typeof NUMBER_BOUNDS)[]) out[key] = clamp(key, cfg[key]);
   out.bot_reviews = cfg.bot_reviews !== false;
   out.bot_reviewers = Array.isArray(cfg.bot_reviewers) ? strings(cfg.bot_reviewers) : DEFAULTS.bot_reviewers;

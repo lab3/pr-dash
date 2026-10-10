@@ -63,7 +63,7 @@ export async function verifyAccess(
       algorithms: ["RS256"],
       requiredClaims: ["exp", "iat"],
     });
-    email = String(payload.email ?? "").toLowerCase();
+    email = typeof payload.email === "string" ? payload.email.trim().toLowerCase() : "";
   } catch {
     return { ok: false, response: deny("Access token could not be verified.") };
   }
