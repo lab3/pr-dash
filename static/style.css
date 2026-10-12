@@ -43,8 +43,9 @@ a:hover { color: var(--accent); text-decoration: underline; }
 .muted { color: var(--muted); }
 
 /* ---------- top bar ---------- */
+/* Top bar and view tabs scroll as one pinned block, so the views line stays reachable. */
+.sticky-head { position: sticky; top: 0; z-index: 5; }
 .topbar {
-  position: sticky; top: 0; z-index: 5;
   display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
   padding: 12px 24px;
   background: var(--panel);
