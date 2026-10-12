@@ -2,17 +2,9 @@ import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 import type { DashboardData, PullRequest, Repo } from "../../src/types.ts";
 import { compute, reposIn, residualBlockers, state, viewMatcher, watcherMatch, withExclusion } from "./state.ts";
+import { makePr } from "./test-fixtures.ts";
 
-function pr(number: number, watcher: PullRequest["watcher"]): PullRequest {
-  return {
-    number, title: `t${number}`, url: `https://github.com/o/r/pull/${number}`, isDraft: false,
-    createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-08T00:00:00Z", head: "f", base: "main",
-    review: null, ci: "SUCCESS", additions: 1, deletions: 1, comments: 0, author: "len", authorUrl: null,
-    avatar: null, labels: [], requestedReviewers: [], requestedTeams: [], isMine: false, reviewRequestedFromMe: false,
-    id: `PR_${number}`, headOid: "head1", mergeable: "MERGEABLE", mergeState: "CLEAN",
-    watcher, watcherIssue: null, blockers: [],
-  };
-}
+const pr = (number: number, watcher: PullRequest["watcher"]): PullRequest => makePr({ number, watcher });
 
 const withFindings = pr(1, { status: "open", open: 2, total: 2, nits: 0, stale: false, latest: {} as never, earlier: [] });
 const without = pr(2, null);
