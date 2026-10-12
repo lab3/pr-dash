@@ -1,7 +1,7 @@
 // Pure logic for bot (PR Watcher) reviews: which actor is a bot, what counts as a nit,
 // and how findings roll up into a status. No I/O, so `node --test` covers it.
 import { sanitizeHtml } from "./sanitize.ts";
-import type { Finding, PullRequest, WatcherReview, WatcherStatus, WatcherSummary } from "../src/types.ts";
+import type { Finding, PullRequest, Reply, WatcherReview, WatcherStatus, WatcherSummary } from "../src/types.ts";
 
 /**
  * GraphQL reports bots with a bare login ("grok-pr-watcher") and `__typename: "Bot"`,
@@ -56,6 +56,7 @@ export interface RawRootComment {
   bodyHTML: string;
   author: RawActor | null;
   pullRequestReview: { id: string } | null;
+  createdAt?: string;
 }
 
 export interface RawThread {
@@ -102,6 +103,13 @@ export function shapeWatcher(reviews: RawBotReview[], threads: RawThread[], head
       resolved: t.isResolved,
       outdated: t.isOutdated,
       replies: Math.max(0, (t.comments?.totalCount ?? 1) - 1),
+      thread: (t.comments?.nodes ?? []).slice(1).flatMap((c): Reply[] => c ? [{
+        author: botLogin(c.author) ?? "ghost",
+        bot: c.author?.__typename === "Bot" || /\[bot\]$/i.test(c.author?.login ?? ""),
+        createdAt: c.createdAt ?? "",
+        url: c.url,
+        html: sanitizeHtml(c.bodyHTML),
+      }] : []),
     });
     byReview.set(reviewId, list);
   }

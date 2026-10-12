@@ -136,6 +136,28 @@ test("shapeWatcher records replies, a null line, and sanitized finding html", ()
   assert.equal(f.html, "<p>Bug  here</p>");
 });
 
+test("shapeWatcher keeps the reply bodies of a thread, sanitized, with author and bot flag", () => {
+  const t = thread("r1", "Bug here", { replies: 2 });
+  t.comments!.nodes!.push(
+    { url: "https://github.com/o/r/pull/1#discussion_r2", body: "Fixed in abc", bodyHTML: "<p dir=\"auto\">Fixed in <script>x</script>abc</p>",
+      author: { __typename: "Bot", login: "claude" }, pullRequestReview: null, createdAt: "2026-10-12T10:00:00Z" },
+    { url: "https://github.com/o/r/pull/1#discussion_r3", body: "thanks", bodyHTML: "<p dir=\"auto\">thanks</p>",
+      author: { __typename: "User", login: "len" }, pullRequestReview: null, createdAt: "2026-10-12T11:00:00Z" },
+  );
+  const f = shapeWatcher([review("r1", "2026-10-08T10:00:00Z")], [t], "head1")!.latest.findings[0];
+  assert.equal(f.replies, 2);
+  assert.deepEqual(f.thread, [
+    { author: "claude[bot]", bot: true, createdAt: "2026-10-12T10:00:00Z", url: "https://github.com/o/r/pull/1#discussion_r2", html: "<p>Fixed in abc</p>" },
+    { author: "len", bot: false, createdAt: "2026-10-12T11:00:00Z", url: "https://github.com/o/r/pull/1#discussion_r3", html: "<p>thanks</p>" },
+  ]);
+});
+
+test("shapeWatcher: reply count comes from totalCount even when fewer replies were fetched", () => {
+  const f = shapeWatcher([review("r1", "2026-10-08T10:00:00Z")], [thread("r1", "x", { replies: 12 })], "head1")!.latest.findings[0];
+  assert.equal(f.replies, 12);
+  assert.deepEqual(f.thread, []);
+});
+
 test("shapeWatcher ignores threads that belong to other reviews", () => {
   const other = thread("someone-else", "human comment");
   const w = shapeWatcher([review("r1", "2026-10-08T10:00:00Z")], [other], "head1")!;

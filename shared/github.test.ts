@@ -11,6 +11,12 @@ test("repo query carries the Watcher marker fields", () => {
   }
 });
 
+test("botReviewsQuery fetches the first ten comments of each thread, with createdAt", () => {
+  const q = botReviewsQuery(1);
+  assert.ok(q.includes("comments(first: 10)"));
+  assert.ok(q.includes("createdAt"));
+});
+
 test("botReviewsQuery has one aliased reviews field per bot", () => {
   const q = botReviewsQuery(2);
   assert.ok(q.includes("$ids: [ID!]!"));

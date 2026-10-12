@@ -25,10 +25,11 @@ jobs:
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
     runs-on: ubuntu-latest
     # contents: read is enough. The action commits and pushes through the Claude GitHub App's own
-    # token, not GITHUB_TOKEN, so bumping this to write buys nothing.
+    # token, not GITHUB_TOKEN, so bumping this to write buys nothing. pull-requests: write is for
+    # `gh api`, which runs on GITHUB_TOKEN, replying inside review threads.
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write
       issues: read
       id-token: write
       actions: read # Required for Claude to read CI results on PRs
@@ -51,12 +52,32 @@ jobs:
           additional_permissions: |
             actions: read
 
-          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
-          # prompt: 'Update the pull request description to include a summary of changes.'
+          # Answer each Watcher finding inside its own review thread, so the verdict sits next to
+          # the finding on GitHub and in PR Dash. The tracking comment alone is invisible to both.
+          # A bare `prompt` would switch the action to agent mode (no branch, no push, no tracking
+          # comment); track_progress keeps tag mode and injects the prompt as extra instructions.
+          track_progress: true
+          prompt: |
+            Follow the instructions in the comment that tagged you. In addition, when the trigger
+            is a review or review comment from a bot that opened inline review threads on this PR:
+            1. List the PR's review threads with `gh api graphql`, querying
+               `pullRequest.reviewThreads(first: 50) { nodes { id isResolved comments(first: 1) { nodes { databaseId author { login } } } } }`.
+               Keep the threads whose first comment is by that bot. Note each thread's node `id`
+               and its first comment's `databaseId`.
+            2. Reply inside each kept thread with your verdict in one or two sentences: fixed
+               (name the commit), disagree (say why), or deferred (say why). Post it with
+               `gh api repos/${{ github.repository }}/pulls/<number>/comments/<databaseId>/replies -f body=...`.
+            3. Resolve the threads you fixed with the `resolveReviewThread(input: {threadId: <node id>})`
+               mutation. Leave threads you disagree with or deferred open.
+            4. Keep your tracking comment as the summary; do not repeat the per-finding text there.
+            Hard limits on `gh api`: only the reviewThreads query above, POST to
+            `.../pulls/<number>/comments/<id>/replies`, and `resolveReviewThread` on threads you
+            replied to. No other REST writes and no other GraphQL mutations. If a call outside
+            these is needed, say so in the tracking comment instead of making it.
 
           # Opus 5.5 at high effort (its default is medium). Let Claude sync a branch that moved under
           # it and run the tests/checks. The git patterns are prefix matches pinned to the origin
           # remote, so arbitrary remotes or refs are not pre-approved.
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
-          claude_args: '--model claude-opus-5-5 --effort high --allowedTools "Bash(git fetch origin:*),Bash(git pull --rebase origin:*),Bash(git pull origin:*),Bash(git rebase origin/:*),Bash(git status:*),Bash(git log:*),Bash(git diff:*),Bash(npm ci),Bash(npm test:*),Bash(npm run check:*)"'
+          claude_args: '--model claude-opus-5-5 --effort high --allowedTools "Bash(git fetch origin:*),Bash(git pull --rebase origin:*),Bash(git pull origin:*),Bash(git rebase origin/:*),Bash(git status:*),Bash(git log:*),Bash(git diff:*),Bash(npm ci),Bash(npm test:*),Bash(npm run check:*),Bash(gh api repos/${{ github.repository }}/pulls/:*),Bash(gh api graphql:*)"'
