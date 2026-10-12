@@ -59,13 +59,21 @@ jobs:
           track_progress: true
           prompt: |
             Follow the instructions in the comment that tagged you. In addition, when the trigger
-            is a review from a bot that opened inline review threads:
-            - Reply inside each of those threads with your verdict in one or two sentences:
-              fixed (name the commit), disagree (say why), or deferred (say why). Post the reply
-              with `gh api repos/${{ github.repository }}/pulls/<number>/comments/<comment_id>/replies -f body=...`.
-            - Resolve the threads you fixed with `gh api graphql` and the `resolveReviewThread`
-              mutation. Leave threads you disagree with open.
-            - Keep your tracking comment as the summary; do not repeat the per-finding text there.
+            is a review or review comment from a bot that opened inline review threads on this PR:
+            1. List the PR's review threads with `gh api graphql`, querying
+               `pullRequest.reviewThreads(first: 50) { nodes { id isResolved comments(first: 1) { nodes { databaseId author { login } } } } }`.
+               Keep the threads whose first comment is by that bot. Note each thread's node `id`
+               and its first comment's `databaseId`.
+            2. Reply inside each kept thread with your verdict in one or two sentences: fixed
+               (name the commit), disagree (say why), or deferred (say why). Post it with
+               `gh api repos/${{ github.repository }}/pulls/<number>/comments/<databaseId>/replies -f body=...`.
+            3. Resolve the threads you fixed with the `resolveReviewThread(input: {threadId: <node id>})`
+               mutation. Leave threads you disagree with or deferred open.
+            4. Keep your tracking comment as the summary; do not repeat the per-finding text there.
+            Hard limits on `gh api`: only the reviewThreads query above, POST to
+            `.../pulls/<number>/comments/<id>/replies`, and `resolveReviewThread` on threads you
+            replied to. No other REST writes and no other GraphQL mutations. If a call outside
+            these is needed, say so in the tracking comment instead of making it.
 
           # Opus 5.5 at high effort (its default is medium). Let Claude sync a branch that moved under
           # it and run the tests/checks. The git patterns are prefix matches pinned to the origin

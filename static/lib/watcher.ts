@@ -128,7 +128,9 @@ function findingRow(f: Finding): HTMLElement {
 /** Collapsed "n replies" under a finding; opens to the replies in order, oldest first. */
 function replyThread(f: Finding): HTMLElement {
   const label = `${f.replies} repl${f.replies === 1 ? "y" : "ies"}`;
-  if (!f.thread.length) return h("span", { class: "muted freplies" }, label);
+  // Hosted data may predate `thread` (KV written by an older Worker): count only, no bodies.
+  const replies = f.thread ?? [];
+  if (!replies.length) return h("span", { class: "muted freplies" }, label);
   const key = f.url + "#thread";
   return h("details", {
     class: "fthread",
@@ -140,9 +142,9 @@ function replyThread(f: Finding): HTMLElement {
   },
     h("summary", { class: "muted freplies" }, label),
     h("ul", { class: "replies" },
-      f.thread.map(replyRow),
-      f.replies > f.thread.length
-        ? h("li", { class: "reply muted" }, link(f.url, { class: "muted" }, `${f.replies - f.thread.length} more on GitHub ↗`))
+      replies.map(replyRow),
+      f.replies > replies.length
+        ? h("li", { class: "reply muted" }, link(f.url, { class: "muted" }, `${f.replies - replies.length} more on GitHub ↗`))
         : null),
   );
 }
