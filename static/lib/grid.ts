@@ -1,7 +1,7 @@
 // Grid layout: one card per repo with a compact PR list.
 import type { PullRequest, Repo } from "../../src/types.ts";
 import { ICON, ago, daysSince, h, link, svg } from "./dom.ts";
-import { CI, REVIEW, avatarUrl, expandButton, hideButton, isBroken, moreOnGitHub } from "./list.ts";
+import { CI, REVIEW, avatarUrl, expandButton, hideButton, isRunning, moreOnGitHub, rowClasses, runningBadge } from "./list.ts";
 import { state, type RepoView } from "./state.ts";
 import { watcherDot } from "./watcher.ts";
 
@@ -18,12 +18,14 @@ function card(repo: Repo, prs: PullRequest[]): HTMLElement {
   const expanded = state.expanded.has(repo.name);
   const review = prs.filter((p) => p.reviewRequestedFromMe).length;
   const failing = prs.filter((p) => p.ci === "FAILURE" || p.ci === "ERROR").length;
+  const running = prs.filter(isRunning).length;
   const approved = prs.filter((p) => p.review === "APPROVED").length;
   const drafts = prs.filter((p) => p.isDraft).length;
   const watcher = prs.filter((p) => (p.watcher?.open ?? 0) > 0).length;
   const stats = [
     review ? h("span", { class: "gstat you" }, `${review} need your review`) : null,
     failing ? h("span", { class: "gstat bad" }, `${failing} failing`) : null,
+    running ? h("span", { class: "gstat running" }, h("span", { class: "spinner" }), `${running} running`) : null,
     watcher ? h("span", { class: "gstat bad" }, `${watcher} with open Watcher findings`) : null,
     approved ? h("span", { class: "gstat good" }, `${approved} approved`) : null,
     drafts ? h("span", { class: "gstat" }, `${drafts} draft${drafts > 1 ? "s" : ""}`) : null,
@@ -52,7 +54,7 @@ function card(repo: Repo, prs: PullRequest[]): HTMLElement {
 function row(pr: PullRequest): HTMLElement {
   const review = pr.review ? REVIEW[pr.review] : null;
   const avatar = avatarUrl(pr, 14);
-  return h("li", { class: "gpr" + (pr.isDraft ? " is-draft" : "") + (pr.reviewRequestedFromMe ? " attn" : "") + (isBroken(pr) ? " is-broken" : "") },
+  return h("li", { class: "gpr" + rowClasses(pr) },
     svg(pr.isDraft ? ICON.draft : ICON.pr, 14, "pr-icon " + (pr.isDraft ? "draft" : "open")),
     h("div", { class: "gpr-main" },
       link(pr.url, { class: "gpr-title", title: pr.title }, pr.title, " ", h("span", { class: "pr-num" }, "#" + pr.number)),
@@ -60,6 +62,7 @@ function row(pr: PullRequest): HTMLElement {
         avatar ? h("img", { class: "avatar", src: avatar, alt: "", loading: "lazy" }) : null,
         h("span", null, pr.author),
         watcherDot(pr),
+        runningBadge(pr),
         h("span", { class: daysSince(pr.updatedAt) > 14 ? "stale" : "", title: "Updated " + new Date(pr.updatedAt).toLocaleString() },
           ago(pr.updatedAt)),
         pr.isDraft ? h("span", { class: "badge draft" }, "Draft") : null,
