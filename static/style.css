@@ -43,8 +43,16 @@ a:hover { color: var(--accent); text-decoration: underline; }
 .muted { color: var(--muted); }
 
 /* ---------- top bar ---------- */
+/* Top bar and view tabs scroll as one pinned block, so the views line stays reachable. */
+.sticky-head { position: sticky; top: 0; z-index: 5; background: var(--panel); }
+/* Short viewports (phone landscape): the wrapped top bar plus tabs would pin about 170px, so
+   only the tabs stay pinned there. display: contents lifts the wrapper out of the box tree;
+   a sticky .tabs inside a static wrapper would stop at the wrapper's edge instead. */
+@media (max-height: 520px) {
+  .sticky-head { display: contents; }
+  .tabs { position: sticky; top: 0; z-index: 5; }
+}
 .topbar {
-  position: sticky; top: 0; z-index: 5;
   display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
   padding: 12px 24px;
   background: var(--panel);
