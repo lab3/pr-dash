@@ -93,10 +93,27 @@ export function isBroken(pr: PullRequest): boolean {
   return pr.ci === "FAILURE" || pr.ci === "ERROR" || pr.mergeable === "CONFLICTING";
 }
 
-/** Draft, Your review, review decision and Watcher badges, in that order. */
+/** True while checks are still running (or expected but not yet reported). */
+export function isRunning(pr: PullRequest): boolean {
+  return pr.ci === "PENDING" || pr.ci === "EXPECTED";
+}
+
+/** Solid amber "CI running" badge with a spinner. Null unless checks are in flight. */
+export function runningBadge(pr: PullRequest): HTMLElement | null {
+  return isRunning(pr) ? h("span", { class: "badge running", title: `Checks ${CI[pr.ci!]}` }, h("span", { class: "spinner" }), "CI running") : null;
+}
+
+/** Row modifier classes shared by both layouts: draft, needs-your-review, running, broken. */
+export function rowClasses(pr: PullRequest): string {
+  return (pr.isDraft ? " is-draft" : "") + (pr.reviewRequestedFromMe ? " attn" : "")
+    + (isRunning(pr) ? " is-running" : "") + (isBroken(pr) ? " is-broken" : "");
+}
+
+/** CI running, Draft, Your review, review decision and Watcher badges, in that order. */
 export function statusBadges(pr: PullRequest): HTMLElement[] {
   const review = pr.review ? REVIEW[pr.review] : null;
   return [
+    runningBadge(pr),
     pr.isDraft ? h("span", { class: "badge draft" }, "Draft") : null,
     pr.reviewRequestedFromMe ? h("span", { class: "badge you" }, "Your review") : null,
     review ? h("span", { class: "badge " + review[0] }, review[1]) : null,
@@ -108,7 +125,7 @@ function renderPr(pr: PullRequest): HTMLElement {
   const reviewers = [...pr.requestedReviewers, ...pr.requestedTeams.map((t) => "@" + t)];
   const avatar = avatarUrl(pr, 16);
   const badges = statusBadges(pr);
-  return h("li", { class: "pr" + (pr.isDraft ? " is-draft" : "") + (pr.reviewRequestedFromMe ? " attn" : "") + (isBroken(pr) ? " is-broken" : "") },
+  return h("li", { class: "pr" + rowClasses(pr) },
     svg(pr.isDraft ? ICON.draft : ICON.pr, 16, "pr-icon " + (pr.isDraft ? "draft" : "open")),
     h("div", { class: "pr-main" },
       h("div", { class: "pr-title-row" },
