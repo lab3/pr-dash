@@ -1,6 +1,6 @@
 // Watcher (bot review) chrome shared by the list and grid layouts: status badges, the
 // mergeable indicator, the grid status dot, and the collapsible review panel.
-import type { Finding, PullRequest, WatcherReview, WatcherStatus } from "../../src/types.ts";
+import type { Finding, PullRequest, Reply, WatcherReview, WatcherStatus } from "../../src/types.ts";
 import { ago, h, html, link } from "./dom.ts";
 import { hooks, residualBlockers, state } from "./state.ts";
 
@@ -121,6 +121,38 @@ function findingRow(f: Finding): HTMLElement {
     link(f.url, { class: "floc" }, f.path + (f.line === null ? "" : ":" + f.line)),
     f.nit ? h("span", { class: "badge nits" }, "nit") : null,
     html("ftext md", f.html),
-    f.replies ? h("span", { class: "muted freplies" }, `${f.replies} repl${f.replies === 1 ? "y" : "ies"}`) : null,
+    f.replies ? replyThread(f) : null,
+  );
+}
+
+/** Collapsed "n replies" under a finding; opens to the replies in order, oldest first. */
+function replyThread(f: Finding): HTMLElement {
+  const label = `${f.replies} repl${f.replies === 1 ? "y" : "ies"}`;
+  if (!f.thread.length) return h("span", { class: "muted freplies" }, label);
+  const key = f.url + "#thread";
+  return h("details", {
+    class: "fthread",
+    open: state.openPanels.has(key),
+    ontoggle: (e: Event) => {
+      if ((e.currentTarget as HTMLDetailsElement).open) state.openPanels.add(key);
+      else state.openPanels.delete(key);
+    },
+  },
+    h("summary", { class: "muted freplies" }, label),
+    h("ul", { class: "replies" },
+      f.thread.map(replyRow),
+      f.replies > f.thread.length
+        ? h("li", { class: "reply muted" }, link(f.url, { class: "muted" }, `${f.replies - f.thread.length} more on GitHub ↗`))
+        : null),
+  );
+}
+
+function replyRow(r: Reply): HTMLElement {
+  return h("li", { class: "reply" + (r.bot ? " is-bot" : "") },
+    h("span", { class: "reply-head" },
+      h("b", null, r.author),
+      h("span", { class: "muted", title: r.createdAt ? new Date(r.createdAt).toLocaleString() : "" }, r.createdAt ? ago(r.createdAt) : ""),
+      link(r.url, { class: "muted" }, "↗")),
+    html("md", r.html),
   );
 }

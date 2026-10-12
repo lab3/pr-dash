@@ -23,6 +23,19 @@ export interface Finding {
   outdated: boolean;
   /** Comments in the thread after the first one. */
   replies: number;
+  /** The first few of those replies, oldest first (up to 9; `replies` may be larger). */
+  thread: Reply[];
+}
+
+/** One reply inside a finding's thread. */
+export interface Reply {
+  /** "[bot]" form for bots (see botLogin), bare login for people. */
+  author: string;
+  bot: boolean;
+  createdAt: string;
+  url: string;
+  /** Sanitized HTML (see src/sanitize.ts). */
+  html: string;
 }
 
 export interface WatcherReview {

@@ -14,7 +14,7 @@ Show each Grok PR Watcher review right on the dashboard, with a status indicator
 1. **Cheap marker.** Add `id`, `headRefOid`, and `latestReviews(first:10){author{login}}` to the existing PR query, so we know which PRs have a Watcher review.
 2. **Second fetch.** Only for those PRs, batch about 20 per query using `nodes(ids:)` to get:
    - `reviews(author:"grok-pr-watcher[bot]")`: id, state, submittedAt, url, commit oid, body text.
-   - `reviewThreads`: isResolved, isOutdated, path, line, the first comment's author, url and text, its review id, and the reply count.
+   - `reviewThreads`: isResolved, isOutdated, path, line, the first ten comments (author, url, text, createdAt), the first comment's review id, and the reply count.
    This two-step fetch costs about 1 rate-limit point per batch. Putting threads into the main query would have cost about 84 points for 10 repos.
 3. The status logic goes in a new pure module, `src/botreviews.ts`, so it can be tested. It uses the existing 120-second cache. Hosted on Cloudflare, the 120-second cache is the KV value the Worker cron rewrites every 5 minutes (see `cloudflare-hosting.md`).
 4. Config adds `bot_reviewers: ["grok-pr-watcher[bot]"]` and `bot_reviews: true`.
@@ -38,7 +38,7 @@ Show each Grok PR Watcher review right on the dashboard, with a status indicator
 - **Collapsible panel under the row**, closed by default:
   - Review age and a link to the review.
   - The summary as **rendered markdown**, collapsed and capped at about 12 lines with a "show more" control. The server fetches GitHub's own `bodyHTML`, which GitHub has already rendered and sanitized, then passes it through a small strict allowlist (p, ul, ol, li, code, pre, a with https links only, strong, em, h3, h4, blockquote, table) before it reaches the browser. That keeps the app dependency-free with no client-side markdown parser. Finding text in the list is rendered the same way.
-  - Findings, open ones first, each with ● open, ✓ resolved, or ↻ outdated, plus `path:line` linking to the comment, the first line of the finding, and a reply count.
+  - Findings, open ones first, each with ● open, ✓ resolved, or ↻ outdated, plus `path:line` linking to the comment, the first line of the finding, and a reply count. The count opens to the replies themselves (up to nine, oldest first, author and age on each) so a bot or a person answering a finding is readable without leaving the dashboard.
   - An "Earlier reviews (n)" section.
 - **Grid card:** a status dot with a tooltip, and an "n with open Watcher findings" stat.
 - **Summary bar:** a chip showing `n open Watcher findings`.

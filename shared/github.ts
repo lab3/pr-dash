@@ -120,9 +120,9 @@ export function botReviewsQuery(botCount: number): string {
         totalCount
         nodes {
           isResolved isOutdated path line
-          comments(first: 1) {
+          comments(first: 10) {
             totalCount
-            nodes { url body bodyHTML author { __typename login } pullRequestReview { id } }
+            nodes { url body bodyHTML createdAt author { __typename login } pullRequestReview { id } }
           }
         }
       }
