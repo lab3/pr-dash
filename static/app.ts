@@ -42,10 +42,9 @@ const els = {
 // ------------------------------------------------------------------ API
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    cache: "no-store", redirect: "manual", ...init,
-    headers: { "X-Requested-With": "XMLHttpRequest", ...(init?.headers as Record<string, string> | undefined) },
-  });
+  const headers = new Headers(init?.headers);
+  headers.set("X-Requested-With", "XMLHttpRequest");
+  const res = await fetch(path, { cache: "no-store", redirect: "manual", ...init, headers });
   if (signedOut(res)) {
     // Never settles: the page is about to reload, so don't flash an error first.
     if (reloadToSignIn()) return new Promise<never>(() => {});
