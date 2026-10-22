@@ -6,6 +6,7 @@ import { ICON, ago, h, store, svg } from "./lib/dom.ts";
 import { openViewEditor } from "./lib/editor.ts";
 import { renderGrid } from "./lib/grid.ts";
 import { renderEmptyList, renderList } from "./lib/list.ts";
+import { reloadToSignIn, signedOut } from "./lib/session.ts";
 import {
   ALL_VIEW, activeView, compute, hooks, reposIn, state, withExclusion,
   type Computed, type Layout, type SortKey, type ToggleKey,
@@ -41,7 +42,15 @@ const els = {
 // ------------------------------------------------------------------ API
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, { cache: "no-store", ...init });
+  const res = await fetch(path, {
+    cache: "no-store", redirect: "manual", ...init,
+    headers: { "X-Requested-With": "XMLHttpRequest", ...(init?.headers as Record<string, string> | undefined) },
+  });
+  if (signedOut(res)) {
+    // Never settles: the page is about to reload, so don't flash an error first.
+    if (reloadToSignIn()) return new Promise<never>(() => {});
+    throw Object.assign(new Error("Your sign-in has expired."), { hint: "Reload the page to sign in again." });
+  }
   const body = (await res.json().catch(() => ({ error: "Server returned an unreadable response." }))) as T | ApiError;
   if (!res.ok || (body && typeof body === "object" && "error" in body)) {
     const err = body as ApiError;
