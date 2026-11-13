@@ -1,4 +1,5 @@
 // Small DOM + formatting helpers shared by the UI modules.
+import { isDark } from "./theme.ts";
 
 export type Child = Node | string | number | null | undefined | false | Child[];
 export type Attrs = Record<string, string | number | boolean | null | undefined | EventListener>;
@@ -82,7 +83,7 @@ export const daysSince = (iso: string): number => (Date.now() - new Date(iso).ge
 export function labelStyle(hex: string): string {
   const c = /^[0-9a-f]{6}$/i.test(hex) ? hex : "8b949e";
   const r = parseInt(c.slice(0, 2), 16), g = parseInt(c.slice(2, 4), 16), b = parseInt(c.slice(4, 6), 16);
-  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const dark = isDark();
   const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
   const fg = dark
     ? `rgb(${Math.min(255, r + 60)},${Math.min(255, g + 60)},${Math.min(255, b + 60)})`

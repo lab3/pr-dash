@@ -65,7 +65,7 @@ Views are saved in `views.json` next to `server.ts`; you can also edit that file
 
 ## Layouts and shortcuts
 
-Switch between the **List** layout (the original: one wide section per repo, one row per PR) and the **Grid** layout (one card per repo, with counts for needs-review, failing, approved and drafts) using the buttons in the top bar.
+Switch between the **List** layout (the original: one wide section per repo, one row per PR) and the **Grid** layout (one card per repo, with counts for needs-review, failing, approved and drafts) using the buttons in the top bar. The three buttons next to them pick the theme: match the system setting (the default), or always light, or always dark. The choice is saved per browser.
 
 ![pr-dash list layout in light mode, showing a saved view](docs/screenshot-list.png)
 
@@ -74,6 +74,7 @@ Switch between the **List** layout (the original: one wide section per repo, one
 | `/` | focus the filter (`Esc` clears it) |
 | `1`–`9` | switch view (`1` = All repos) |
 | `g` | toggle list / grid |
+| `t` | cycle theme: system, light, dark |
 | `r` | refresh from GitHub |
 
 ## Watcher reviews

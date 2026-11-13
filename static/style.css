@@ -1,37 +1,24 @@
 :root {
-  --bg: #f6f7f9;
-  --panel: #ffffff;
-  --panel-2: #f2f4f7;
-  --border: #e1e4e8;
-  --text: #1f2328;
-  --muted: #656d76;
-  --accent: #0969da;
-  --green: #1a7f37;
-  --red: #cf222e;
-  --amber: #9a6700;
-  --purple: #8250df;
-  --pr-num: #9f570a;
-  --shadow: 0 1px 2px rgba(31, 35, 40, .06);
-  color-scheme: light;
+  /* Colors follow the OS setting unless the theme control forces one: <html data-theme> sets
+     color-scheme, and each light-dark() picks its light or dark value from it. */
+  color-scheme: light dark;
+  --bg: light-dark(#f6f7f9, #0d1117);
+  --panel: light-dark(#ffffff, #151b23);
+  --panel-2: light-dark(#f2f4f7, #1c2330);
+  --border: light-dark(#e1e4e8, #2b3340);
+  --text: light-dark(#1f2328, #e6edf3);
+  --muted: light-dark(#656d76, #8d96a0);
+  --accent: light-dark(#0969da, #58a6ff);
+  --green: light-dark(#1a7f37, #3fb950);
+  --red: light-dark(#cf222e, #f85149);
+  --amber: light-dark(#9a6700, #d29922);
+  --purple: light-dark(#8250df, #a371f7);
+  --pr-num: light-dark(#9f570a, #f4a249);
+  --on-accent: light-dark(#fff, #0d1117); /* text on an --accent fill */
+  --shadow: 0 1px 2px light-dark(rgba(31, 35, 40, .06), transparent);
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0d1117;
-    --panel: #151b23;
-    --panel-2: #1c2330;
-    --border: #2b3340;
-    --text: #e6edf3;
-    --muted: #8d96a0;
-    --accent: #58a6ff;
-    --green: #3fb950;
-    --red: #f85149;
-    --amber: #d29922;
-    --purple: #a371f7;
-    --pr-num: #f4a249;
-    --shadow: none;
-    color-scheme: dark;
-  }
-}
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; }
@@ -113,10 +100,9 @@ main { padding: 12px 24px 24px; max-width: 1280px; margin: 0 auto; }
 .repo-desc { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
 .count {
   margin-left: auto; flex: none;
-  background: var(--accent); color: #fff; border-radius: 999px;
+  background: var(--accent); color: var(--on-accent); border-radius: 999px;
   padding: 1px 9px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums;
 }
-@media (prefers-color-scheme: dark) { .count { color: #0d1117; } }
 .repo-head .all { font-size: 12px; color: var(--muted); flex: none; }
 /* "Hide from this view" eye; faint until the repo head or card is hovered. */
 .hide-repo {
@@ -341,8 +327,7 @@ dialog.editor::backdrop { background: rgba(10, 12, 16, .45); }
   border-radius: 6px; padding: 6px 12px; cursor: pointer;
 }
 .editor button:hover { border-color: var(--accent); }
-.editor button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-@media (prefers-color-scheme: dark) { .editor button.primary { color: #0d1117; } }
+.editor button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
 .editor button.danger { color: var(--red); }
 .editor button.danger:hover { border-color: var(--red); }
 .editor button.icon { background: none; border: 0; padding: 4px; color: var(--muted); display: inline-flex; }
@@ -409,10 +394,7 @@ dialog.editor::backdrop { background: rgba(10, 12, 16, .45); }
 .chip .avatar { width: 16px; height: 16px; border-radius: 50%; }
 
 /* ---------- tinted card headers ---------- */
-:root { --card-head: #dfe7f1; --card-head-border: #c5d1df; }
-@media (prefers-color-scheme: dark) {
-  :root { --card-head: #283449; --card-head-border: #3a4862; }
-}
+:root { --card-head: light-dark(#dfe7f1, #283449); --card-head-border: light-dark(#c5d1df, #3a4862); }
 .gcard-head, .gcard-stats { background: var(--card-head); }
 .gcard-head:not(:has(+ .gcard-stats)) { padding-bottom: 11px; }
 .gcard-stats + *, .gcard-head + ul, .gcard-head + .gcard-empty { border-top-color: var(--card-head-border); }

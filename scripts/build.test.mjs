@@ -8,14 +8,15 @@ import { HEADERS, build } from "./build.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
-test("build emits app.js, index.html pointing at it, style.css and _headers", async () => {
+test("build emits app.js, index.html pointing at it, style.css, theme-boot.js and _headers", async () => {
   const outDir = await mkdtemp(path.join(tmpdir(), "prdash-dist-"));
   await build({ staticDir: path.join(root, "static"), outDir });
   const files = (await readdir(outDir)).sort();
-  assert.deepEqual(files, ["_headers", "app.js", "index.html", "style.css"]);
+  assert.deepEqual(files, ["_headers", "app.js", "index.html", "style.css", "theme-boot.js"]);
   const html = await readFile(path.join(outDir, "index.html"), "utf8");
   assert.ok(html.includes('src="/app.js"'));
   assert.ok(!html.includes("/app.ts"));
+  assert.ok(html.includes('<script src="/theme-boot.js"></script>'), "theme-boot.js loads in <head>");
   const js = await readFile(path.join(outDir, "app.js"), "utf8");
   assert.ok(js.includes("renderList") || js.includes("pr-list"), "bundle contains the app");
   assert.ok(!js.includes("node:"), "no Node imports in the browser bundle");

@@ -11,6 +11,7 @@ import {
   ALL_VIEW, activeView, compute, hooks, reposIn, state, withExclusion,
   type Computed, type Layout, type SortKey, type ToggleKey,
 } from "./lib/state.ts";
+import { applyTheme, nextTheme, type Theme } from "./lib/theme.ts";
 
 function byId<T extends HTMLElement = HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -24,6 +25,7 @@ const els = {
   filter: byId<HTMLInputElement>("filter"),
   sort: byId<HTMLSelectElement>("sort"),
   layout: byId("layout"),
+  theme: byId("theme"),
   refresh: byId<HTMLButtonElement>("refresh"),
   summary: byId("summary"),
   notice: byId("notice"),
@@ -158,6 +160,9 @@ function render(): void {
   renderTabs();
   els.layout.querySelectorAll<HTMLButtonElement>("button").forEach((b) => {
     b.setAttribute("aria-pressed", String(b.dataset.layout === state.layout));
+  });
+  els.theme.querySelectorAll<HTMLButtonElement>("button").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.themeChoice === state.theme));
   });
   const data = state.data;
   if (!data) {
@@ -338,6 +343,21 @@ els.layout.addEventListener("click", (e) => {
   if (btn) setLayout(btn.dataset.layout as Layout);
 });
 
+// Re-render on a theme change so label pills, which compute their colors in code, follow it.
+function setTheme(theme: Theme): void {
+  state.theme = theme;
+  store.set("theme", theme);
+  applyTheme(theme);
+  render();
+}
+els.theme.addEventListener("click", (e) => {
+  const btn = (e.target as Element).closest<HTMLButtonElement>("button[data-theme-choice]");
+  if (btn) setTheme(btn.dataset.themeChoice as Theme);
+});
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  if (state.theme === "system") render();
+});
+
 let filterTimer: number | undefined;
 els.filter.addEventListener("input", () => {
   clearTimeout(filterTimer);
@@ -364,6 +384,8 @@ document.addEventListener("keydown", (e) => {
     void load(true);
   } else if (e.key === "g") {
     setLayout(state.layout === "grid" ? "list" : "grid");
+  } else if (e.key === "t") {
+    setTheme(nextTheme(state.theme));
   } else if (/^[1-9]$/.test(e.key)) {
     const ids = [ALL_VIEW, ...state.views.map((v) => v.id)];
     const id = ids[Number(e.key) - 1];
@@ -384,6 +406,7 @@ setInterval(renderFooter, 30_000);
 // Boot: views first (cheap, local) so tabs appear right away, then PR data.
 const fromHash = viewFromHash();
 if (fromHash) state.activeView = fromHash;
+applyTheme(state.theme);
 await loadViews();
 setActiveView(state.activeView, false);
 render();

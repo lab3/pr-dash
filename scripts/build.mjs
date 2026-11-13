@@ -1,7 +1,7 @@
 // Builds dist/ for the Worker's static assets: bundles static/app.ts (and the static/lib modules
 // it imports) into one browser file, copies index.html with the script tag pointing at the
-// bundle, copies style.css, and writes the response headers. Node's own type stripping serves
-// static/*.ts directly in local mode; Workers Static Assets need plain JavaScript.
+// bundle, copies style.css and theme-boot.js, and writes the response headers. Node's own type
+// stripping serves static/*.ts directly in local mode; Workers Static Assets need plain JavaScript.
 //
 //   node scripts/build.mjs
 import { realpathSync } from "node:fs";
@@ -33,6 +33,7 @@ export async function build({ staticDir, outDir }) {
   const html = await readFile(path.join(staticDir, "index.html"), "utf8");
   await writeFile(path.join(outDir, "index.html"), html.replace('src="/app.ts"', 'src="/app.js"'));
   await copyFile(path.join(staticDir, "style.css"), path.join(outDir, "style.css"));
+  await copyFile(path.join(staticDir, "theme-boot.js"), path.join(outDir, "theme-boot.js"));
   await writeFile(path.join(outDir, "_headers"), HEADERS);
 }
 
