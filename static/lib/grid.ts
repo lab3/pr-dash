@@ -57,7 +57,7 @@ function row(pr: PullRequest): HTMLElement {
   return h("li", { class: "gpr" + rowClasses(pr) },
     svg(pr.isDraft ? ICON.draft : ICON.pr, 14, "pr-icon " + (pr.isDraft ? "draft" : "open")),
     h("div", { class: "gpr-main" },
-      link(pr.url, { class: "gpr-title", title: pr.title }, pr.title, " ", h("span", { class: "pr-num" }, "#" + pr.number)),
+      link(pr.url, { class: "gpr-title", title: pr.title }, h("span", { class: "pr-num" }, "#" + pr.number), " ", pr.title),
       h("div", { class: "gpr-meta" },
         avatar ? h("img", { class: "avatar", src: avatar, alt: "", loading: "lazy" }) : null,
         h("span", null, pr.author),
