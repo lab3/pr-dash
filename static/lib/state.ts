@@ -1,6 +1,7 @@
 // UI state, view membership and filtering. Rendering lives in list.ts / grid.ts.
 import type { DashboardData, PullRequest, Repo, View } from "../../src/types.ts";
 import { store } from "./dom.ts";
+import { parseTheme, type Theme } from "./theme.ts";
 
 export type SortKey = "count" | "updated" | "name";
 export type Layout = "list" | "grid";
@@ -15,6 +16,7 @@ export interface State {
   views: View[];
   activeView: string;
   layout: Layout;
+  theme: Theme;
   filter: string;
   sort: SortKey;
   hideDrafts: boolean;
@@ -37,6 +39,7 @@ export const state: State = {
   views: [],
   activeView: store.get("activeView", ALL_VIEW),
   layout: store.get<Layout>("layout", "list"),
+  theme: parseTheme(store.get<unknown>("theme", "system")),
   filter: "",
   sort: store.get<SortKey>("sort", "count"),
   hideDrafts: store.get("hideDrafts", false),
