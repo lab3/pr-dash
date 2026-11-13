@@ -13,7 +13,7 @@
   --red: light-dark(#cf222e, #f85149);
   --amber: light-dark(#9a6700, #d29922);
   --purple: light-dark(#8250df, #a371f7);
-  --pr-num: light-dark(#9f570a, #f4a249);
+  --pr-num: light-dark(#a200da, #f4a249);
   --on-accent: light-dark(#fff, #0d1117); /* text on an --accent fill */
   --shadow: 0 1px 2px light-dark(rgba(31, 35, 40, .06), transparent);
 }
