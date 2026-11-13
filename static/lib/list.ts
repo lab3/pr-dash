@@ -129,7 +129,7 @@ function renderPr(pr: PullRequest): HTMLElement {
     svg(pr.isDraft ? ICON.draft : ICON.pr, 16, "pr-icon " + (pr.isDraft ? "draft" : "open")),
     h("div", { class: "pr-main" },
       h("div", { class: "pr-title-row" },
-        link(pr.url, { class: "pr-title" }, pr.title, " ", h("span", { class: "pr-num" }, "#" + pr.number)),
+        link(pr.url, { class: "pr-title" }, h("span", { class: "pr-num" }, "#" + pr.number), " ", pr.title),
         pr.labels.length ? h("span", { class: "labels" },
           pr.labels.map((l) => h("span", { class: "label", style: labelStyle(l.color) }, l.name))) : null,
       ),
